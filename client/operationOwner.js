@@ -56,14 +56,16 @@ export function createOperationOwner(adapters) {
     if (custody.retired || entry.released) return false;
     return retained && entry.mode !== "live" || !permission.retired;
   }
-  function deliver(operation, name, value, terminal) {
+  function deliver(operation, name, value, terminal, context) {
     const entry = record(operation);
     const prepare = terminal ? completion : channels.get(name);
     if (!prepare) throw new TypeError("Unknown operation delivery channel");
-    if (!entry.dispatched || entry.completed || !current(entry, terminal)) return false;
+    const inContext = context ?? (terminal && entry.mode !== "live" ? undefined : entry.context);
+    const admissible = () => (inContext?.() ?? true) && current(entry, terminal);
+    if (!entry.dispatched || entry.completed || !admissible()) return false;
     // Getters and domain preparation may retire the owner or complete reentrantly.
     const prepared = prepare(value);
-    if (entry.completed || !current(entry, terminal)) return false;
+    if (entry.completed || !admissible()) return false;
     if (terminal) entry.completed = true;
     prepared.deliver(prepared.value);
     return true;
@@ -71,13 +73,13 @@ export function createOperationOwner(adapters) {
   const owner = Object.freeze({
     identity: custody.identity,
     workflow,
-    operation(mode = "live") {
+    operation(mode = "live", context) {
       custody.assertCurrent(); permission.assertCurrent();
       if (!["live", "retained", "outcome", "recovery"].includes(mode)) throw new TypeError("Unknown operation mode");
       const operation = Object.freeze({ mode });
       const scope = createOwnershipScope();
       const resource = custody.defer(async () => { (await scope.releaseAll()).throwIfFailed(); });
-      issued.set(operation, { mode, scope, resource, started: false, dispatched: false, completed: false, released: false });
+      issued.set(operation, { mode, context, scope, resource, started: false, dispatched: false, completed: false, released: false });
       return operation;
     },
     dispatch(operation, intent) {
@@ -95,11 +97,13 @@ export function createOperationOwner(adapters) {
         // Reserve custody before transport entry. Keep values in the P02 handle;
         // returning a bare thenable value across this await would assimilate it.
         const work = entry.scope.acquire(() => {
+          entry.context?.assert();
           const prepared = prepareIntent(intent);
           if (!prepared || typeof prepared !== "object") throw new TypeError("Dispatch requires a value envelope");
           const then = prepared.then;
           if (typeof then === "function") throw new TypeError("Dispatch preparation must be synchronous");
           const value = prepared.value;
+          entry.context?.assert();
           custody.assertCurrent(); permission.assertCurrent();
           if (entry.released) throw new OwnershipError("Operation has been released");
           entry.dispatched = true;
@@ -128,7 +132,7 @@ export function createOperationOwner(adapters) {
       } catch (error) { fail(error); }
       return promise;
     },
-    deliver: (operation, name, value) => deliver(operation, name, value, false),
+    deliver: (operation, name, value, context) => deliver(operation, name, value, false, context),
     complete: (operation, value) => deliver(operation, null, value, true),
     async release(operation) {
       const entry = record(operation);

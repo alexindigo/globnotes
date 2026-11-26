@@ -16,6 +16,33 @@ function fixture(overrides = {}) {
 async function ack(request, path = "P") { request.resolve({ path, content: request.snapshot.content }); await flushPromises(); }
 
 describe("per-note save FIFO", () => {
+  it.each(["rejected", "committed", "unavailable"])("settles a %s send even when release fails", async outcome => {
+    const cleanup = Error("release failed");
+    const refusal = { response: { data: { code: "operation_conflict" } } };
+    const cleanupFailed = vi.fn();
+    const { queue, sent } = fixture({ releaseSend: async () => { throw cleanup; }, cleanupFailed });
+    const receipt = queue.submit(snapshot("A"));
+    await flushPromises();
+    if (outcome === "rejected") sent[0].reject(refusal);
+    else sent[0].resolve(outcome === "committed" ? { path: "P", content: "A" } : { committed: true });
+    await flushPromises();
+    expect(cleanupFailed).toHaveBeenCalledExactlyOnceWith(cleanup, sent[0].snapshot);
+    expect(queue.state()).toMatchObject({ inFlight: false, canDiscard: true, status: outcome === "committed" ? "idle" : "paused" });
+    expect(await receipt.completion).toMatchObject(outcome === "rejected" ? { status: "failed", certainty: "known-no-write" } : { status: "acknowledged" });
+    expect(sent.map(request => request.snapshot.content)).toEqual(["A"]);
+  });
+  it.each([false, true])("a disposed queue never publishes a late integration (reject=%s)", async rejected => {
+    const reached = deferred(), integration = deferred(), changed = vi.fn(), failed = vi.fn();
+    const { queue, sent } = fixture({ changed, failed, acknowledge: () => { reached.resolve(); return integration.promise; } });
+    const receipt = queue.submit(snapshot("A")); await flushPromises();
+    sent[0].resolve({ path: "P", content: "A" }); await reached.promise;
+    queue.dispose(); changed.mockClear();
+    if (rejected) integration.reject(Error("old route")); else integration.resolve({ baseContent: "replacement", rebaseConflict: true });
+    await flushPromises();
+    expect(await receipt.completion).toEqual({ status: "disposed", safe: false });
+    expect(queue.state()).toMatchObject({ acknowledged: { path: "P", content: "A" }, rebaseConflict: false, failure: null });
+    expect([changed.mock.calls, failed.mock.calls]).toEqual([[], []]);
+  });
   it("records a receipt without making its missing private body the next save base", async () => {
     const releaseSend = vi.fn();
     const { queue, sent, adapters } = fixture({ releaseSend });

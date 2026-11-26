@@ -121,6 +121,7 @@ export function createSettingsSession({
   }
   const pageState = createPages({ registry, confirm: askDeparture,
     getSession: () => permissionSessionKey(config(), token()),
+    isGuest: () => config().principal?.kind === "guest",
     getRecoveryScope: () => config().capabilities?.canManageVault && config().accountId && config().vaultId ? identityOwnerKey(config()) : null,
     canRead: page => !isPluginSettingsPage(page) || !config().capabilities || config().capabilities.canManageVault,
     canWrite: writable });

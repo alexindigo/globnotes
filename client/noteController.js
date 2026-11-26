@@ -25,6 +25,7 @@ import { notePathError } from "./validators.js";
 import { acquireVaultChanges } from "./vaultChanges.js";
 import { reviewConflictTarget } from "./conflictNavigation.js";
 import { createOperationOwner } from "./operationOwner.js";
+import { bindContext, createSessionContext, retiredContext } from "./sessionContext.js";
 
 // Ephemeral tab-session metadata, retained when the Note view is unmounted.
 const conflictBanners = new Map();
@@ -51,8 +52,11 @@ export function createNoteController({
   failed = error => apiErrorHandler(error, toast),
   ownerId = createUuid(),
   sessionKey = () => null,
+  canRead = () => true,
+  captureSession,
 }) {
   const noteScope = ref(sessionKey());
+  const lifetime = createSessionContext({ key: sessionKey });
   const canModify = computed(() => noteScope.value === sessionKey() && (getContext().capabilities ? getContext().capabilities.canEdit === true : getContext().authType != authTypes.readOnly));
   const isNewNote = computed(() => !getContext().path);
   const editMode = ref(false);
@@ -102,6 +106,7 @@ export function createNoteController({
   });
   const { addImageBlobHook } = attachmentsFactory({
     getState: () => ({ requestedPath: newPath.value, path: getContext().path, identity: sessionKey(), canEdit: canModify.value }),
+    capture: () => captureNote(),
     notify: ({ title, message, severity }) => notify(message, title, severity), failed,
   });
   // The port exposes editor capabilities, never a component or its DOM/state.
@@ -127,28 +132,26 @@ export function createNoteController({
   const saveChangesMessage = computed(() => queueState.value.unresolved
     ? "Save work is retained. Discard removes queued saves and current unsaved changes only when all sent writes have a known outcome."
     : "Do you want to save your changes?");
-  let applyingAcknowledgement = false, loadGeneration = 0;
-  let releaseChanges = null, externalRead = 0, pendingVaultEntry = null, pendingVaultReset = false;
+  let applyingAcknowledgement = false, mounted = false;
+  let releaseChanges = null, externalRead, pendingVaultEntry = null, pendingVaultReset = false;
   let vaultRefreshPending = false;
   let contentChangedTimeout = null, titleFollowTimer = null;
   let pendingNavTarget = null, pendingSessionDecision = null, pendingDecisionPromise = null;
   const resourceIdentity = computed(() => noteResourceIdentity(getContext().path, getContext().query));
+  const ownsNote = () => noteScope.value === sessionKey();
+  const captureSessionLifetime = () => {
+    const application = captureSession?.(), local = lifetime.capture();
+    return bindContext(() => local() && (application?.() ?? true), ownsNote);
+  };
+  const captureNote = () => captureSessionLifetime().bind(() => resourceIdentity.value);
   const reads = createOperationOwner({ owner: Object.freeze({ ownerId }), dispatch: path => read(path),
-    channels: { result: {
-      prepare(value) {
-        const data = { ...value.data };
-        if (!value.current()) void reads.release(value.operation);
-        return { value: { data, accept: value.accept } };
-      },
-      deliver: value => value.accept(value.data),
-    } },
   });
   async function readOwned(path, current) {
-    const operation = reads.operation();
-    let result;
+    const operation = reads.operation("live", current);
     try {
       const response = await reads.dispatch(operation, path);
-      reads.deliver(operation, "result", { operation, current, data: response.value, accept: value => { result = value; } });
+      const result = { ...response.value };
+      if (!current()) throw retiredContext();
       return result;
     } finally { await reads.release(operation); }
   }
@@ -159,6 +162,7 @@ export function createNoteController({
   });
   const saveOwner = saveOwnerFactory({
     ownerId,
+    capture: captureSessionLifetime,
     getState: () => ({ note: note.value, isNewNote: isNewNote.value, requestedPath: newPath.value,
       contentRevision: contentRevision.value, pathRevision: pathRevision.value, identity: sessionKey(), canEdit: canModify.value }),
     getBuffer: currentBuffer, isContentChanged: isDirty,
@@ -188,11 +192,12 @@ export function createNoteController({
       saveOwnerState.value = state; queueState.value = state.queue;
       if (pendingVaultEntry && !state.queue.inFlight && !["preparing", "sending"].includes(state.queue.status)) {
         const entry = pendingVaultEntry; pendingVaultEntry = null;
-        Promise.resolve().then(() => onVaultChange(entry));
+        const current = captureNote();
+        Promise.resolve().then(() => { if (current()) onVaultChange(entry); });
       }
     },
     saved: (result, { originalPath }) => {
-      externalRead++;
+      externalRead = null;
       vaultRefreshPending = false;
       deletedElsewhere = false;
       vaultNotice.value = "";
@@ -239,15 +244,16 @@ export function createNoteController({
   function onSourceSelection(line) { editorLine.value = line; urlSync.scheduleCaretSync(); }
 
   function init() {
+    if (lifetime.disposed || !canRead()) return;
     if (noteScope.value !== sessionKey() && (editMode.value || queueState.value.unresolved)) return;
     noteScope.value = sessionKey();
     if (urlSync.consumeAcknowledgedResource(getContext().path, saveOwner.queueState()?.sessionId)) return;
     clearEditTimers();
     saveOwner.reset();
-    externalRead++; pendingVaultEntry = null; pendingVaultReset = false; vaultNotice.value = ""; deletedElsewhere = false;
+    lifetime.advanceProjection();
+    externalRead = null; pendingVaultEntry = null; pendingVaultReset = false; vaultNotice.value = ""; deletedElsewhere = false;
     vaultRefreshPending = false;
-    const generation = ++loadGeneration, resource = resourceIdentity.value, identity = sessionKey();
-    const isCurrentLoad = () => generation === loadGeneration && resource === resourceIdentity.value && identity === sessionKey();
+    const isCurrentLoad = captureNote().bind(canRead);
     drafts.release();
     isNoteNotFound.value = false; loadStatus.value = "loading";
     if (getContext().path) {
@@ -360,7 +366,7 @@ export function createNoteController({
     newPath.value = note.value.path;
     editBasename.value = basenameOf(newPath.value || ""); editFolder.value = directoryFromPath(newPath.value);
     unsavedChanges.value = false; editorInitialValue.value = getInitialEditorValue();
-    contentRevision.value = 0; pathRevision.value = 0; saveOwner.start();
+    contentRevision.value = 0; pathRevision.value = 0; saveOwner.start(drafts.base?.(newPath.value));
     editorMode.value = pendingEditorMode || getEditorPreference();
     editorInitialLine.value = pendingInitialLine; editorLine.value = pendingInitialLine || null;
     pendingEditorMode = null; pendingInitialLine = null;
@@ -390,31 +396,29 @@ export function createNoteController({
   function getInitialEditorValue() { const draftContent = loadDraft(); return draftContent !== null ? draftContent : note.value.content ?? ""; }
   let deleteIntent = null;
   function captureDeletion() {
-    const identity = sessionKey();
-    const generation = loadGeneration, resource = resourceIdentity.value;
-    return () => canModify.value && identity === sessionKey() && generation === loadGeneration && resource === resourceIdentity.value;
+    return captureNote().bind(() => canModify.value, () => note.value.path);
   }
   async function deleteHandler() {
     const current = captureDeletion();
-    if (!current() || !await resolveOwnedWork() || !current()) return;
-    deleteIntent = current;
+    if (!canModify.value || !await resolveOwnedWork() || !current()) return;
+    deleteIntent = { current, path: note.value.path, version: note.value.version };
     isDeleteModalVisible.value = true;
   }
   async function deleteConfirmedHandler() {
-    const current = deleteIntent ?? captureDeletion();
+    const { current, path, version } = deleteIntent ?? { current: captureDeletion(), path: note.value.path, version: note.value.version };
     deleteIntent = null;
-    if (!current() || !await settlePendingWrites() || isDirty() || !current()) return;
-    const { path, version } = note.value;
+    if (!path || !canModify.value || !current() || !await settlePendingWrites() || isDirty() || !current()) return;
     try {
       await remove(path, version);
       if (!current()) return;
-      publishFact(TOPICS.NOTE_DELETE, { path }); exitEditState();
-      notify("Note deleted ✓", "Success", "success"); router.push({ name: "home" });
+      publishFact(TOPICS.NOTE_DELETE, { path }); if (!current()) return;
+      exitEditState(); if (!current()) return;
+      notify("Note deleted ✓", "Success", "success"); if (current()) router.push({ name: "home" });
     } catch (error) {
       if (!current()) return;
       showNoteError(error, noteOperationError(error));
       // Changed elsewhere: the note stays; show what is there now.
-      if (error?.response?.data?.code === "base_stale") return refreshFromVault();
+      if (current() && error?.response?.data?.code === "base_stale") return refreshFromVault();
     }
   }
   function saveHandler(close = false) {
@@ -486,8 +490,11 @@ export function createNoteController({
     preview.cancel();
   }
   function contentChangedHandler() {
-    if (isDirty()) { unsavedChanges.value = true; setUnload(true); drafts.save(newPath.value, currentBuffer(), contentRevision.value); }
-    else { unsavedChanges.value = false; setUnload(false); clearDraft(); }
+    if (isDirty()) {
+      unsavedChanges.value = true; setUnload(true);
+      if (drafts.base) drafts.save(newPath.value, currentBuffer(), contentRevision.value, saveOwner.baseContent?.());
+      else drafts.save(newPath.value, currentBuffer(), contentRevision.value);
+    } else { unsavedChanges.value = false; setUnload(false); (drafts.clearClean ?? clearDraft)(); }
   }
   function clearDraft() { drafts.clear(); }
   function loadDraft() { return drafts.load(newPath.value, contentRevision.value); }
@@ -509,14 +516,16 @@ export function createNoteController({
     else if (entry) onVaultChange(entry);
   }
   async function refreshFromVault() {
+    if (!ownsNote() || !canRead() || lifetime.disposed) return;
     const path = openVaultPath();
     if (!path) return;
     if (loadStatus.value === "loading") { pendingVaultReset = true; return; }
     if (loadStatus.value !== "loaded") return;
-    const ticket = ++externalRead, generation = loadGeneration, version = note.value.version, identity = sessionKey();
+    externalRead = {};
+    const version = note.value.version, current = captureNote().bind(() => externalRead, openVaultPath, canRead);
     try {
-      const fresh = await readOwned(path, () => ticket === externalRead && generation === loadGeneration && openVaultPath() === path && identity === sessionKey());
-      if (ticket !== externalRead || generation !== loadGeneration || openVaultPath() !== path || identity !== sessionKey()) return;
+      const fresh = await readOwned(path, current);
+      if (!current()) return;
       if (!deletedElsewhere && !isNoteNotFound.value && fresh.version && fresh.version === note.value.version) {
         vaultRefreshPending = false; vaultNotice.value = ""; return;
       }
@@ -533,15 +542,17 @@ export function createNoteController({
         try {
           if (editor?.applyAcknowledgement(fresh.content ?? "") === false) throw new Error("Editor declined external update");
         } finally { applyingAcknowledgement = false; }
+        if (!current()) return;
         saveOwner.adopt(fresh);
       }
+      if (!current()) return;
       note.value = fresh; isNoteNotFound.value = false; deletedElsewhere = false; viewerRevision.value++;
       vaultRefreshPending = false;
       publishTitle(); refreshDirtyState();
       vaultNotice.value = "";
       notify("Updated with changes from elsewhere", "Note updated", "info");
     } catch (error) {
-      if (ticket !== externalRead || generation !== loadGeneration || openVaultPath() !== path || identity !== sessionKey()) return;
+      if (!current()) return;
       if (error.response?.status === 404) markDeletedElsewhere();
       else {
         if (vaultRefreshPending) vaultNotice.value = "This note changed elsewhere, but reload failed; the displayed version may be out of date.";
@@ -550,13 +561,14 @@ export function createNoteController({
     }
   }
   function markDeletedElsewhere() {
-    externalRead++;
+    externalRead = null;
     vaultRefreshPending = false;
     deletedElsewhere = true;
     vaultNotice.value = editMode.value ? "Deleted elsewhere - saving will re-create it" : "This note was deleted elsewhere";
     if (!editMode.value) isNoteNotFound.value = true;
   }
   function onVaultChange(entry) {
+    if (!ownsNote() || !canRead() || lifetime.disposed) return;
     const path = openVaultPath();
     if (!path || (entry.path !== `${path}.md` && entry.oldPath !== `${path}.md`)) return;
     if (loadStatus.value === "loading") { pendingVaultEntry = entry; return; }
@@ -572,6 +584,7 @@ export function createNoteController({
   }
   let editorActionUnsubs = [];
   function mount() {
+    mounted = true;
     editorActionUnsubs = [
       subscribeAction(TOPICS.EDITOR_SAVE, () => { if (actionAvailable(TOPICS.EDITOR_SAVE)) saveHandler(false); }),
       subscribeAction(TOPICS.EDITOR_SAVE_CLOSE, () => { if (actionAvailable(TOPICS.EDITOR_SAVE_CLOSE)) saveHandler(true); }),
@@ -599,21 +612,25 @@ export function createNoteController({
   function routeHashChanged(hash) { if (!editMode.value) viewLine.value = viewLineFromFragment(parseFragment(hash), viewLine.value); }
   function captureEditorForRemount() { if (editMode.value && editorMode.value === "wysiwyg" && editor) editorInitialValue.value = currentBuffer(); }
   function dispose() {
+    lifetime.dispose();
     stopIdentity();
     vaultRefreshPending = false;
     if (editMode.value) { editMode.value = false; refreshDirtyState(); }
     clearEditTimers();
     preview.dispose();
-    externalRead++; releaseChanges?.(); releaseChanges = null;
-    loadGeneration++; const saving = saveOwner.dispose(); disposeSessionParticipant();
+    externalRead = null; releaseChanges?.(); releaseChanges = null;
+    const saving = saveOwner.dispose(); disposeSessionParticipant();
     if (pendingSessionDecision) { pendingSessionDecision("cancel"); pendingSessionDecision = null; }
     editorActionUnsubs.forEach(fn => fn()); editorActionUnsubs = [];
     return Promise.all([reads.dispose(), saving]);
   }
   const stopIdentity = watch(sessionKey, () => {
-    loadGeneration++; externalRead++; clearEditTimers(); preview.cancel();
+    lifetime.advanceProjection(); externalRead = null; clearEditTimers();
     pendingVaultEntry = null; pendingVaultReset = false;
-    if (!editMode.value && !queueState.value.unresolved) { note.value = {}; previewHtml.value = ""; loadStatus.value = "loading"; }
+    if (!editMode.value && !queueState.value.unresolved) {
+      note.value = {}; previewHtml.value = ""; loadStatus.value = "loading";
+      if (mounted && sessionKey() != null) void init();
+    }
     refreshDirtyState();
   }, { flush: "sync" });
   const state = readonly(reactive({

@@ -3,11 +3,90 @@ import { identityOwnerKey } from "../shared/identity_session.ts";
 
 export function createIdentityNoteDraftStore({ prefix, identity, tokens, ...adapters }) {
   const owner = identityOwnerKey(identity());
-  return createNoteDraftStore({ ...adapters, scope: JSON.stringify([prefix, owner]),
+  return createQualifiedDraftStore({ ...adapters, scope: JSON.stringify([prefix, owner]),
     isTokenStored: tokens.isCurrentTokenStored, isCurrent: () => identityOwnerKey(identity()) === owner });
 }
 
 const DRAFT_PREFIX = "globnotes:draft:";
+
+function createQualifiedDraftStore({ local = localStorage, session = sessionStorage, scope, isTokenStored, isCurrent }) {
+  const owned = new Map();
+  const keyFor = path => `${DRAFT_PREFIX}identity:${encodeURIComponent(scope)}:${encodeURIComponent(path)}`;
+  // This durable marker contains numbers only. Session-only text and its base
+  // stay in session storage. A vanished tab does not itself retire anything.
+  const markerKey = key => `${key}:history`;
+  const metadataKey = key => `${key}:metadata`;
+  const decode = text => { try { return JSON.parse(text); } catch { return null; } };
+  const history = key => decode(local.getItem(markerKey(key))) ?? { latest: 0, retired: -1 };
+  function read(storage, key) {
+    const value = storage.getItem(key);
+    if (value === null) return null;
+    const meta = decode(storage.getItem(metadataKey(key)));
+    return { storage, key, value, order: meta?.order ?? 0, base: meta?.base };
+  }
+  function remove(record) {
+    record.storage.removeItem(record.key);
+    record.storage.removeItem(metadataKey(record.key));
+  }
+  function retire(key, order) {
+    const old = history(key), retired = Math.max(old.retired, order);
+    local.setItem(markerKey(key), JSON.stringify({ latest: old.latest, retired }));
+    for (const storage of [local, session]) {
+      const record = read(storage, key);
+      if (record && record.order <= retired) remove(record);
+    }
+    if (owned.get(key)?.order <= retired) owned.delete(key);
+  }
+  function save(path, value, revision, base) {
+    if (!isCurrent() || !path || typeof value !== "string") return;
+    const key = keyFor(path), old = history(key);
+    const storage = isTokenStored() ? local : session;
+    const previous = owned.get(key), stored = read(storage, key);
+    if (previous?.revision === revision && previous.storage === storage && previous.order === stored?.order &&
+        previous.order > old.retired && stored.value === value && stored.base === base) return;
+    const order = Math.max(old.latest, old.retired) + 1;
+    local.setItem(markerKey(key), JSON.stringify({ ...old, latest: order }));
+    storage.setItem(key, value);
+    storage.setItem(metadataKey(key), JSON.stringify({ order, base }));
+    owned.set(key, { storage, key, value, revision, order, base });
+  }
+  function load(path, revision) {
+    if (!path || !isCurrent()) return null;
+    const key = keyFor(path), { retired } = history(key);
+    const candidates = [read(local, key), read(session, key)].filter(record => record && record.order > retired);
+    candidates.sort((a, b) => b.order - a.order);
+    const selected = candidates[0];
+    if (!selected) return null;
+    const previous = owned.get(key);
+    owned.set(key, { ...selected, revision: previous?.order === selected.order && previous.storage === selected.storage ? Math.min(previous.revision, revision) : revision });
+    return selected.value;
+  }
+  function clear() {
+    if (!isCurrent()) return;
+    for (const [key, record] of owned) retire(key, record.order);
+  }
+  function clearClean() {
+    if (!isCurrent()) return;
+    for (const [key, record] of owned) {
+      const stored = read(record.storage, key);
+      if (stored?.order === record.order && stored.value === record.value) remove(record);
+    }
+    owned.clear();
+  }
+  function captureAcknowledgement(revision, paths) {
+    if (!isCurrent()) return;
+    const captured = new Map([...owned.values()].filter(record => record.revision <= revision).map(record => [record.key, record.order]));
+    // A user can submit before the draft debounce runs. Capture the order at
+    // submission, never at response time, so later drafts remain recoverable.
+    for (const path of paths.filter(Boolean)) {
+      const key = keyFor(path), existing = owned.get(key);
+      if (!existing || existing.revision <= revision) captured.set(key, history(key).latest);
+    }
+    return () => { if (isCurrent()) for (const [key, order] of captured) retire(key, order); };
+  }
+  return { save, load, base: path => owned.get(keyFor(path))?.base, clear, clearClean, captureAcknowledgement,
+    clearAcknowledged(revision) { captureAcknowledgement(revision, [])?.(); }, release: () => owned.clear() };
+}
 // Bare legacy keys are ambiguous: these values belong to app modules, not drafts.
 const APP_KEYS = new Set([
   "token", "defaultEditorMode", "expandedFolders", "sidebarRecent",

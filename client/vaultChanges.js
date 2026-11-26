@@ -3,6 +3,7 @@ import { openVaultChanges } from "./api.js";
 import { publish, TOPICS } from "./bus/index.js";
 import { connectionLifetime, createConnectionLifetime } from "./connectionLifetime.js";
 import { createOperationOwner } from "./operationOwner.js";
+import { bindContext } from "./sessionContext.js";
 export { HIDDEN_GRACE_MS } from "./connectionLifetime.js";
 
 /** Reconnect delays grow from 500 ms and never exceed this. */
@@ -23,15 +24,15 @@ export const TERMINAL_STATUSES = new Set([400, 401, 403, 404, 405, 410, 501]);
 export function createVaultChanges({ open = options => openVaultChanges(options), publish: emit = publish,
   // Resolved at call time, so the page's current timer implementation applies.
   setTimer = (fn, ms) => setTimeout(fn, ms), clearTimer = id => clearTimeout(id), now = () => Date.now(),
-  lifetime = createConnectionLifetime({ setTimer, clearTimer }), sessionKey = () => undefined } = {}) {
+  lifetime = createConnectionLifetime({ setTimer, clearTimer }), sessionKey, captureSession } = {}) {
   let owners = 0, seq = 0, attempts = 0, polling = false, pollingSince = 0;
   let pageActive = lifetime.state().active;
   let timer = null, connection = null, connected = false, disposed = false, disposal = null;
   const draining = new Set(), cleanupErrors = [];
   const revisions = new Map();
   const metadataTopics = { conflicts: TOPICS.VAULT_CONFLICTS, drivers: TOPICS.VAULT_DRIVERS };
-  let identitySession;
-  const live = () => !disposed && owners > 0 && pageActive && identitySession !== null;
+  let cursorOwner = { key: sessionKey ? null : undefined };
+  const live = () => !disposed && owners > 0 && pageActive && cursorOwner.key !== null && (!sessionKey || sessionKey() === cursorOwner.key);
   function retire() {
     const old = connection; connection = null; connected = false;
     if (!old) return;
@@ -48,13 +49,14 @@ export function createVaultChanges({ open = options => openVaultChanges(options)
     retire();
     // Cleanup may reenter restart/acquire; the replacement it installed wins.
     if (connection || !live()) return;
-    const mode = polling ? "poll" : "stream", identity = sessionKey();
+    const mode = polling ? "poll" : "stream";
     // Completed polls continue one observation lifetime. Real reconnects and
     // page/owner restarts must deliver a fresh snapshot even at the same revision.
     if (!continuePoll) revisions.clear();
     let openedAt = null;
     const abort = new AbortController();
-    const current = () => live() && connection === operationOwner && identity === sessionKey();
+    const session = captureSession?.() ?? (() => true);
+    let current;
     // Every non-terminal outcome ends here: one timer, a bounded delay.
     const reconnect = reason => {
       if (!current() || timer !== null) return;
@@ -103,7 +105,7 @@ export function createVaultChanges({ open = options => openVaultChanges(options)
       channels: {
         event: {
           // Snapshot all event fields before the adapter's final delivery fence.
-          prepare(value) { const event = value.event, data = value.data, captured = data && { ...data }; if (!current()) operationOwner.revoke(); return { value: { event, data: captured } }; },
+          prepare(value) { const event = value.event, data = value.data, captured = data && { ...data }; return { value: { event, data: captured } }; },
           deliver({ event, data }) {
             if (Object.hasOwn(metadataTopics, event)) {
               if (!Number.isSafeInteger(data?.revision) || data.revision < 0) throw new Error(`Invalid ${event === "conflicts" ? "conflict" : "driver"} revision`);
@@ -125,7 +127,8 @@ export function createVaultChanges({ open = options => openVaultChanges(options)
       },
     });
     connection = operationOwner;
-    const operation = operationOwner.operation();
+    current = bindContext(() => live() && session(), () => cursorOwner, () => connection);
+    const operation = operationOwner.operation("live", current);
     try {
       await operationOwner.dispatch(operation, { since: seq, poll: mode === "poll" });
       const opened = now();
@@ -154,12 +157,13 @@ export function createVaultChanges({ open = options => openVaultChanges(options)
   }
   return {
     setSession(next) {
-      if (next === identitySession) return;
+      if (disposed || next === cursorOwner.key) return;
       // Publish the replacement before cancellation can reenter. A newer
       // session/restart installed by that callback owns its connection.
-      identitySession = next; seq = 0; attempts = 0; polling = false; revisions.clear();
+      const installed = cursorOwner = { key: next };
+      seq = 0; attempts = 0; polling = false; revisions.clear();
       retire();
-      if (identitySession === next && !connection && live()) connect();
+      if (cursorOwner === installed && !connection && live()) connect();
     },
     suspendDocument: lifetime.suspendDocument,
     resumeDocument: lifetime.resumeDocument,

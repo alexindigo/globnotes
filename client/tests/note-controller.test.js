@@ -3,6 +3,7 @@ import { isReadonly, reactive, ref } from "vue";
 import { heldOperation } from "../../tests/helpers/owned_operation.ts";
 import { createNoteController } from "../noteController.js";
 import { createNotePreview } from "../notePreview.js";
+import { createIdentityNoteDraftStore } from "../noteDrafts.js";
 import { TOPICS } from "../bus/index.js";
 import { getNote, deleteNote, updateNote, createNote } from "../api.js";
 
@@ -58,6 +59,55 @@ function fixture(overrides = {}, contextValues = {}) {
 }
 
 describe("note workflow ownership", () => {
+  it("does not read or replace Alice's clean editor on Bob's vault reset", async () => {
+    const identity = ref("alice");
+    const read = vi.fn(async path => ({ path, content: identity.value, version: identity.value }));
+    const f = fixture({ sessionKey: () => identity.value, read });
+    await f.controller.mount(); f.enter(); identity.value = "bob";
+    await f.handlers.get(TOPICS.VAULT_RESET)({ next: 1 });
+    expect([read.mock.calls, f.controller.currentBuffer(), f.controller.state.note.version]).toEqual([[["folder/P"]], "alice", "alice"]);
+  });
+  it("reloads an unchanged reader route when a new session arrives", async () => {
+    const identity = ref("alice"), read = vi.fn(async path => ({ path, content: `# ${identity.value}` }));
+    const delivered = deferred();
+    const f = fixture({ sessionKey: () => identity.value, read,
+      publish: (topic, value) => { if (topic === TOPICS.NOTE_TITLE_CHANGED && value.title === "bob") delivered.resolve(); } });
+    await f.controller.mount(); identity.value = "bob";
+    await delivered.promise;
+    expect([read.mock.calls, f.controller.state.loadStatus, f.controller.state.note.content]).toEqual([[["folder/P"], ["folder/P"]], "loaded", "# bob"]);
+  });
+  it("resumes the surviving remembered draft against its original conflict base", async () => {
+    let remembered = true;
+    const makeDrafts = () => createIdentityNoteDraftStore({ prefix: "/draft-base", identity: () => ({
+      principal: { kind: "account" }, accountId: "alice", vaultId: "vault",
+    }), tokens: { isCurrentTokenStored: () => remembered } });
+    try {
+      makeDrafts().save("folder/P", "remembered edit", 1, "original base");
+      remembered = false;
+      makeDrafts().save("folder/P", "closed tab edit", 1, "original base");
+      sessionStorage.clear();
+      const f = fixture({ drafts: makeDrafts() });
+      await f.controller.mount(); f.controller.toggleEditModeHandler();
+      expect(f.controller.state.isDraftModalVisible).toBe(true);
+      f.controller.setEditMode();
+      expect(f.controller.state.editorInitialValue).toBe("remembered edit");
+      updateNote.mockResolvedValueOnce({ path: "folder/P", content: "saved merge" });
+      const receipt = f.controller.saveHandler();
+      expect(await receipt.completion).toMatchObject({ status: "acknowledged" });
+      expect(updateNote).toHaveBeenCalledExactlyOnceWith("folder/P", "folder/P", "remembered edit", "none", "original base");
+      expect(makeDrafts().load("folder/P", 0)).toBeNull();
+    } finally { localStorage.clear(); sessionStorage.clear(); }
+  });
+  it("sends the version displayed when deletion was confirmed even after a reset", async () => {
+    const read = vi.fn().mockResolvedValueOnce({ path: "folder/P", content: "A", version: "v1" })
+      .mockResolvedValueOnce({ path: "folder/P", content: "B", version: "v2" });
+    const f = fixture({ read });
+    await f.controller.mount(); await f.controller.deleteHandler();
+    await f.handlers.get(TOPICS.VAULT_RESET)({ next: 1 });
+    expect(f.controller.state.note.version).toBe("v2");
+    await f.controller.deleteConfirmedHandler();
+    expect(f.adapters.remove).toHaveBeenCalledExactlyOnceWith("folder/P", "v1");
+  });
   it("identity invalidation retains the original dirty editor and cannot borrow Bob's Edit", async () => {
     const identity = ref("alice");
     const f = fixture({ sessionKey: () => identity.value }, { capabilities: { canEdit: true } });
@@ -70,10 +120,13 @@ describe("note workflow ownership", () => {
   it("a retired identity's original read cannot repopulate the current note view", async () => {
     vi.useRealTimers();
     const identity = ref("alice"); let hold;
-    const f = fixture({ sessionKey: () => identity.value, read: async () => { await hold(); return { path: "folder/P", content: "Alice private" }; } });
+    const read = vi.fn(async path => ({ path, content: "Bob replacement" })).mockImplementationOnce(async () => {
+      await hold(); return { path: "folder/P", content: "Alice private" };
+    });
+    const f = fixture({ sessionKey: () => identity.value, read });
     await heldOperation({ label: "original note read", owner: () => f.controller, progress: { kind: "controlled", clock: "external" } }, boundary => { hold = boundary; return f.controller.mount(); }, async work => {
       await work.reached(); identity.value = "bob"; await work.result();
-      expect([f.controller.state.note.content, f.controller.state.canModify]).toEqual([undefined, false]);
+      expect([f.controller.state.note.content, f.controller.state.canModify]).toEqual(["Bob replacement", true]);
     });
   });
   it("Review conflict uses the shared copy lookup and ordinary dirty departure protection", async () => {
@@ -539,7 +592,7 @@ describe("note workflow ownership", () => {
     identity.value = "bob";
     removed.reject({ response: { status: 409, data: { code: "base_stale" } } });
     await deletion;
-    expect(f.adapters.read).toHaveBeenCalledExactlyOnceWith("folder/P");
+    expect(f.adapters.read.mock.calls).toEqual([["folder/P"], ["folder/P"]]); // one initial read and one replacement read
     expect(f.adapters.toast.add).not.toHaveBeenCalled();
     expect(f.router.push).not.toHaveBeenCalled();
   });

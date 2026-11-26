@@ -11,6 +11,7 @@ import { CHANGE_STREAM_STALL_MS } from "../shared/vault_changes.ts";
 import { hasUnsavedWork } from "./sessionActions.js";
 import { requestReauthentication } from "./reauthentication.js";
 import { createOperationOwner } from "./operationOwner.js";
+import { createSessionContext, retiredContext } from "./sessionContext.js";
 
 const pathPrefix = readPathPrefix();
 
@@ -18,56 +19,45 @@ const api = axios.create({ baseURL: `${pathPrefix}/_/api` });
 
 /** Prepared instance transport. Capture credentials before preparation/queueing;
  * callers own their final UI delivery separately from the original wire. */
-export function createIdentityApi({ tokens, sessionKey, captureLive, captureCredential, prefix = pathPrefix,
+export function createIdentityApi({ tokens, sessionKey, context = createSessionContext({ key: sessionKey, tokens }), prefix = pathPrefix,
   http = axios.create({ baseURL: `${prefix}/_/api` }), fetch: request = fetch,
   onAuthorityFailure = () => {} } = {}) {
   const get = http.get?.bind(http), post = http.post?.bind(http), send = http.request?.bind(http);
-  function capture(recovery = false) {
-    const scope = sessionKey(), token = tokens.getStoredToken();
-    const current = recovery ? captureCredential?.() : captureLive?.();
-    return { scope, token, current: () => (current?.() ?? (recovery || scope === sessionKey())) && token === tokens.getStoredToken() };
-  }
   async function exchange(kind, path, data, options = {}, recovery = false) {
-    const captured = capture(recovery);
-    let result, owner;
-    owner = createOperationOwner({ owner: Object.freeze({ scope: captured.scope }),
+    const { current, token } = context.transport(recovery);
+    let result;
+    const owner = createOperationOwner({ owner: Object.freeze({}),
       prepare() {
         const prepared = { ...options, headers: { ...(options.headers ?? {}),
-          ...(captured.token ? { Authorization: `Bearer ${captured.token}` } : {}) } };
-        if (!captured.current()) owner.revoke();
+          ...(token ? { Authorization: `Bearer ${token}` } : {}) } };
         return { value: prepared };
       },
       dispatch: prepared => kind === "read" ? get(path, prepared) : send({ ...prepared, method: kind, url: path, data }),
-      channels: { failure: { prepare(error) { if (!captured.current()) owner.revoke(); return { value: error }; }, deliver: onAuthorityFailure } },
-      completion: { prepare(response) {
-        const value = response.data;
-        if (!captured.current()) owner.revoke();
-        return { value };
-      }, deliver: value => { result = value; } },
+      channels: { failure: { deliver: error => onAuthorityFailure(error, current) } },
+      completion: { prepare: response => ({ value: response.data }), deliver: value => { result = value; } },
     });
-    const operation = owner.operation(kind === "read" ? "live" : "outcome");
+    const operation = owner.operation(kind === "read" ? "live" : "outcome", current);
     try {
       const response = await owner.dispatch(operation, path);
-      if (!owner.complete(operation, response.value)) throw Object.assign(new Error("Response belongs to a retired identity."), { staleIdentity: true });
-      return result;
+      if (!owner.complete(operation, response.value)) throw retiredContext();
     } catch (error) {
       if (!recovery && [401, 403].includes(error.response?.status ?? error.status)) owner.deliver(operation, "failure", error);
       throw error;
     } finally { (await owner.dispose()).throwIfFailed(); }
+    if (kind === "read" && !current()) throw retiredContext();
+    return result;
   }
   async function stream(open, options) {
-    const captured = capture();
-    let owner;
-    owner = createOperationOwner({ owner: Object.freeze({ scope: captured.scope }),
-      prepare(value) { const prepared = { ...value }; if (!captured.current()) owner.revoke(); return { value: prepared }; },
-      dispatch: (value, delivery) => open({ ...value, request, readToken: () => captured.token, basePrefix: prefix, isCurrent: captured.current,
+    const { current, token } = context.transport(false);
+    const owner = createOperationOwner({ owner: Object.freeze({}),
+      prepare: value => ({ value: { ...value } }),
+      dispatch: (value, delivery) => open({ ...value, request, readToken: () => token, basePrefix: prefix, isCurrent: current,
         onEvent: event => delivery.deliver("event", event), onClose: reason => delivery.deliver("close", reason) }),
       release: close => close?.(),
-      channels: Object.fromEntries([["event", options.onEvent], ["close", options.onClose], ["failure", onAuthorityFailure]].map(([name, callback]) => [name, {
-        prepare(value) { if (!captured.current()) owner.revoke(); return { value }; }, deliver: value => callback?.(value),
-      }])),
+      channels: { event: { deliver: value => options.onEvent?.(value) }, close: { deliver: value => options.onClose?.(value) },
+        failure: { deliver: error => onAuthorityFailure(error, current) } },
     });
-    const operation = owner.operation();
+    const operation = owner.operation("live", current);
     try { await owner.dispatch(operation, options); }
     catch (error) {
       if ([401, 403].includes(error.response?.status ?? error.status)) owner.deliver(operation, "failure", error);
@@ -79,7 +69,10 @@ export function createIdentityApi({ tokens, sessionKey, captureLive, captureCred
     write: (method, path, data, options) => exchange(method, path, data, options),
     getConfig: () => exchange("read", "config", undefined, undefined, true), getStatus: () => exchange("read", "auth/check"),
     async getToken(username, password, totp) {
-      return (await post("token", { username, password, ...(totp ? { totp } : {}) })).data.access_token;
+      const { current } = context.transport(true);
+      const token = (await post("token", { username, password, ...(totp ? { totp } : {}) })).data.access_token;
+      if (!current()) throw retiredContext();
+      return token;
     },
     openPluginHostEvents: options => stream(openPluginHostEvents, options),
     openVaultChanges: options => stream(openVaultChanges, options),

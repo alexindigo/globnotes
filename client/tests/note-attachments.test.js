@@ -17,6 +17,18 @@ function fixture(overrides = {}) {
 }
 
 describe("note attachments", () => {
+  it("does not insert into the same editor after its note changes within one session", async () => {
+    let path = "one/Note", hold;
+    const inserted = vi.fn();
+    const f = fixture({ getState: () => ({ identity: "alice", path }), upload: async () => { await hold(); return uploaded; } });
+    await heldOperation({ label: "upload for one note", owner: () => f, progress: { kind: "controlled", clock: "external" } }, boundary => {
+      hold = boundary; return f.postAttachment(file, inserted);
+    }, async work => {
+      await work.reached(); path = "two/Note";
+      expect(await work.result()).toBeUndefined();
+      expect(inserted).not.toHaveBeenCalled(); expect(f.publish).not.toHaveBeenCalled();
+    });
+  });
   it("View cannot upload and a retired upload cannot insert into Bob's editor", async () => {
     let state = { identity: "alice", canEdit: false, path: "Note" }, hold;
     const insert = vi.fn(), f = fixture({ getState: () => state, upload: vi.fn(async () => { await hold(); return uploaded; }) });

@@ -4,22 +4,17 @@ import { authTypes } from "./constants.js";
 import { getToastOptions } from "./helpers.js";
 import { storeToken } from "./tokenStorage.js";
 import { createOperationOwner } from "./operationOwner.js";
+import { bindContext } from "./sessionContext.js";
 
 export function createIdentityLoginFlow({ session, ...adapters }) {
   return createLoginFlow({ ...adapters, identity: true,
     requestToken: session.transport.getToken,
     persistToken: session.acceptToken,
-    authenticated: async () => {
-      if (!await session.refresh()) return;
-      const current = session.capture();
-      const owner = createOperationOwner({ owner: Object.freeze({}), dispatch: value => value,
-        channels: { accepted: {
-          prepare() { const target = adapters.redirect?.() || { name: "home" }; if (!current()) owner.revoke(); return { value: target }; },
-          deliver(target) { return adapters.authenticated ? adapters.authenticated() : adapters.navigate(target); },
-        } } });
-      const operation = owner.operation();
-      try { await owner.dispatch(operation, null); if (current()) owner.deliver(operation, "accepted", null); }
-      finally { (await owner.dispose()).throwIfFailed(); }
+    authenticated: async acceptContext => {
+      let current;
+      if (!await session.refresh(accepted => { current = acceptContext(accepted); }) || !current?.()) return;
+      const target = adapters.redirect?.() || { name: "home" };
+      if (current()) await (adapters.authenticated ? adapters.authenticated() : adapters.navigate(target));
     },
     beforeSignIn: session.beforeSignIn, capture: session.capture,
   });
@@ -38,35 +33,30 @@ export function createLoginFlow({
   authenticated, isCurrent = () => true, identity = false,
   beforeSignIn, capture = () => isCurrent,
 } = {}) {
-  let pending = null, active = null, current = isCurrent, tokenAccepted = false, completing;
-  let owner;
-  const guarded = (prepare, deliver) => ({ prepare(value) {
-    const prepared = prepare(value);
-    if (!isCurrent() || !current()) owner.revoke();
-    return { value: prepared };
-  }, deliver });
-  owner = createOperationOwner({ owner: Object.freeze({}),
+  let pending = null, active = null, current, tokenAccepted = false, completing, disposed = false;
+  const acceptContext = session => current = bindContext(() => !disposed && isCurrent() && session());
+  const channel = (prepare, deliver) => ({ prepare: value => ({ value: prepare(value) }), deliver });
+  const owner = createOperationOwner({ owner: Object.freeze({}),
     prepare(value) {
       const fields = { ...value };
-      if (!isCurrent() || !current()) owner.revoke();
       return { value: fields };
     },
     async dispatch(fields) {
       if (beforeSignIn && !await beforeSignIn()) return null;
-      if (!isCurrent() || !current()) return null;
+      if (!current()) return null;
       return requestToken(fields.username, fields.password, fields.totp);
     },
     channels: {
-      token: guarded(token => ({ token, remember: credentials().rememberMe }), ({ token, remember }) => {
+      token: channel(token => ({ token, remember: credentials().rememberMe }), ({ token, remember }) => {
         if (persistToken(token, remember) === false) return;
         tokenAccepted = true;
         // The accepted token is this workflow's deliberate handoff. The next
         // phase captures it, never an arbitrary token selected at later dispatch.
-        current = capture();
+        acceptContext(capture());
       }),
-      complete: guarded(() => authenticated ? null : redirect() || { name: "home" }, target => { completing = authenticated ? authenticated() : navigate(target); }),
-      clear: guarded(value => value, () => clearCredentials()),
-      error: guarded(error => error, error => { const message = loginError(error); if (message) toast.add(message); else reportError(error, toast); }),
+      complete: channel(() => authenticated ? null : redirect() || { name: "home" }, target => { completing = authenticated ? authenticated(acceptContext) : navigate(target); }),
+      clear: { deliver: () => clearCredentials() },
+      error: { deliver: error => { const message = loginError(error); if (message) toast.add(message); else reportError(error, toast); } },
     },
   });
   function init(authType) {
@@ -76,21 +66,22 @@ export function createLoginFlow({
   }
 
   function logIn() {
-    if (active || !isCurrent()) return pending;
-    current = capture(); tokenAccepted = false;
-    const operation = owner.operation(); active = operation;
+    if (active || disposed || !isCurrent()) return pending;
+    acceptContext(capture()); tokenAccepted = false;
+    const operation = owner.operation("live", current); active = operation;
     pending = owner.dispatch(operation, credentials())
       .then(result => {
         if (result.value === null || !owner.deliver(operation, "token", result.value) || !tokenAccepted) return;
-        if (owner.deliver(operation, "complete", null)) return completing;
+        if (owner.deliver(operation, "complete", null, current)) return completing;
       })
       .catch((error) => {
-        if (!isCurrent() || !current()) return;
-        owner.deliver(operation, "clear", null);
-        owner.deliver(operation, "error", error);
+        owner.deliver(operation, "clear", null, current);
+        owner.deliver(operation, "error", error, current);
       }).finally(async () => { await owner.release(operation); active = null; pending = null; });
     return pending;
   }
 
-  return { init, logIn, hasWork: owner.hasWork, settle: owner.settle, dispose: owner.dispose };
+  return { init, logIn, hasWork: () => pending !== null || owner.hasWork(),
+    async settle() { if (pending) await pending; return owner.settle(); },
+    dispose() { disposed = true; return owner.dispose(); } };
 }

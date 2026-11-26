@@ -3,6 +3,7 @@ import { reactive, watch } from "vue";
 import { settingsFieldGroups } from "./declarativeSettings.js";
 import { pinExplanation } from "./configurationProvenance.js";
 import { createOperationOwner } from "./operationOwner.js";
+import { bindContext, createSessionContext, retiredContext } from "./sessionContext.js";
 
 const copy = value => JSON.parse(JSON.stringify(value));
 export function validateSettingsInput(field, raw) {
@@ -41,13 +42,16 @@ async function bounded(operation) {
 
 /** Records outlive rendered pages. Registry adapters own effects; this
  * controller owns drafts, request admission, revisions and decisions. */
-export function createSettingsPageState({ registry, confirm, getSession = () => null, getRecoveryScope, canRead = () => true, canWrite = () => true }) {
+export function createSettingsPageState({ registry, confirm, getSession = () => null, getRecoveryScope,
+  isGuest = () => getSession() === null, captureSession, canRead = () => true, canWrite = () => true }) {
   const records = reactive(new Map());
   const retained = new Map();
-  let session = getSession(), scope = getRecoveryScope?.(), generation = 0;
+  const lifetime = createSessionContext({ key: getSession });
+  let session = getSession(), scope = getRecoveryScope?.(), guest = isGuest();
   function synchronize() {
-    const next = getSession(), authorized = getRecoveryScope?.();
-    if (next === session && (next === null || authorized === scope)) return;
+    if (lifetime.disposed) return;
+    const next = getSession(), authorized = getRecoveryScope?.(), nextGuest = isGuest();
+    if (next === session && authorized === scope && nextGuest === guest) return;
     if (scope) for (const record of records.values()) {
       // A sent version belongs only to the original wire, not to the new
       // draft. Later typing and work that was never submitted may be kept.
@@ -57,26 +61,30 @@ export function createSettingsPageState({ registry, confirm, getSession = () => 
     }
     for (const record of records.values()) record.retired = true;
     records.clear();
-    generation++;
+    lifetime.advanceProjection();
     session = next;
     scope = authorized;
-    if (next !== null) for (const [id, draft] of retained) {
+    guest = nextGuest;
+    if (!guest) for (const [id, draft] of retained) {
       if (!scope || draft.scope !== scope) retained.delete(id);
     }
   }
-  const stopSession = watch(() => [getSession(), getRecoveryScope?.()], synchronize, { flush: "sync" });
-  const recordKey = id => { synchronize(); return JSON.stringify([generation, id]); };
+  const stopSession = watch(() => [getSession(), getRecoveryScope?.(), isGuest()], synchronize, { flush: "sync" });
+  const recordKey = id => { synchronize(); return JSON.stringify([lifetime.generation, id]); };
   const currentRecords = () => { synchronize(); return [...records.values()]; };
   const requests = new Map();
   const wires = reactive(new Map());
   const loads = reactive(new Map());
   const reviews = reactive(new Map());
-  let disposed = false;
-  const retired = () => Object.assign(new Error("Original Settings identity retired; your work is retained."), { clientScopeRetired: true });
+  const capture = () => {
+    synchronize();
+    const local = lifetime.capture(), application = captureSession?.();
+    return bindContext(() => { synchronize(); return local() && (application?.() ?? true); });
+  };
+  const captureRecord = (record, page = record.page) => capture().bind(() => record.generation, () => canRead(page));
   const operations = createOperationOwner({ owner: Object.freeze({}),
     prepare(intent) {
       const value = { ...intent, values: intent.values && copy(intent.values) };
-      if (disposed || value.key !== recordKey(value.page.id) || !canRead(value.page) || value.kind === "write" && !canWrite()) throw retired();
       return { value };
     },
     dispatch: intent => intent.kind === "read" ? registry.read(intent.page) : intent.sourceKey === undefined
@@ -85,17 +93,16 @@ export function createSettingsPageState({ registry, confirm, getSession = () => 
     completion: {
       prepare(value) {
         const result = copy(value.result);
-        if (value.kind === "read" && (value.key !== recordKey(value.page.id) || !canRead(value.page))) void operations.release(value.operation);
         return { value: { result, receipt: value.receipt } };
       },
       deliver: value => { value.receipt.value = value.result; },
     },
   });
   async function wire(intent) {
-    const operation = operations.operation(intent.kind === "read" ? "live" : "outcome"), receipt = {};
+    const operation = operations.operation(intent.kind === "read" ? "live" : "outcome", intent.current), receipt = {};
     try {
       const result = (await operations.dispatch(operation, intent)).value;
-      if (!operations.complete(operation, { ...intent, operation, result, receipt })) throw retired();
+      if (!operations.complete(operation, { result, receipt })) throw retiredContext();
       return receipt.value;
     } finally { await operations.release(operation); }
   }
@@ -127,7 +134,7 @@ export function createSettingsPageState({ registry, confirm, getSession = () => 
     return values;
   }
   function snapshot(id, writable = true) {
-    const record = records.get(recordKey(id)) ?? (registry.find(id) ? ensure(id) : null);
+    const record = lifetime.disposed ? null : records.get(recordKey(id)) ?? (registry.find(id) ? ensure(id) : null);
     if (!record || !canRead(record.page)) return { page: null, recovery: { visible: false }, values: {}, committed: {}, drafts: {}, fields: {}, fieldViews: {}, fieldGroups: [], retainedText: "", available: false, loaded: false, dirty: false, pending: false, canSave: false, canRetry: false };
     const values = envelope(record);
     const current=registry.find(id);
@@ -150,7 +157,7 @@ export function createSettingsPageState({ registry, confirm, getSession = () => 
   // current definition. Never project old acknowledgement values as new-schema
   // data, or adopt while any original owner still has unresolved work.
   function adoptDescriptor(record) {
-    if (disposed || record.retired || record.key !== recordKey(record.id)) return false;
+    if (lifetime.disposed || record.retired || record.key !== recordKey(record.id)) return false;
     const page = registry.find(record.id);
     record.available = !!page && page.available !== false;
     if (!record.available || dirty(record) || Object.keys(record.errors).length || requests.has(record.key) || wires.has(record.key) || loads.has(record.key) || reviews.has(record.key) || record.uncertain) return false;
@@ -172,6 +179,7 @@ export function createSettingsPageState({ registry, confirm, getSession = () => 
     return true;
   }
   function edit(id, key, raw) {
+    if (lifetime.disposed) return snapshot(id);
     const record = ensure(id);
     const field = record.page.descriptor?.fields?.find(field => field.key === key);
     if (!field) throw new Error(`Unknown setting: ${key}`);
@@ -184,19 +192,20 @@ export function createSettingsPageState({ registry, confirm, getSession = () => 
     return snapshot(id);
   }
   async function load(id) {
+    if (lifetime.disposed) return snapshot(id);
     if (!registry.find(id) && !records.has(recordKey(id))) return snapshot(id);
     const record = ensure(id);
     const { key } = record;
     if (loads.has(key)) { await loads.get(key); return snapshot(id); }
     if (dirty(record) || requests.has(key) || wires.has(key) || reviews.has(key) || record.uncertain || !record.available || !canRead(record.page)) return snapshot(id);
-    const session = getSession();
-    const generation = ++record.generation;
+    ++record.generation;
     const page = record.page;
+    const current = captureRecord(record, page);
     record.status = "loading";
     const loading = (async () => {
       try {
-        const result = await bounded(() => wire({ kind: "read", page, session, key }));
-        if (!disposed && key === recordKey(id) && canRead(page) && generation === record.generation && (!dirty(record) || !record.loaded)) {
+        const result = await bounded(() => wire({ kind: "read", page, current }));
+        if (current() && (!dirty(record) || !record.loaded)) {
           record.values = copy(result.values);
           record.revision = result.revision;
           record.sourceKey = result.sourceKey;
@@ -214,7 +223,7 @@ export function createSettingsPageState({ registry, confirm, getSession = () => 
           }
         }
       } catch (error) {
-        if (!disposed && key === recordKey(id) && canRead(page) && generation === record.generation) {
+        if (current()) {
           record.status = "error";
           record.message = error.response?.data?.detail ?? error.message;
         }
@@ -242,13 +251,14 @@ export function createSettingsPageState({ registry, confirm, getSession = () => 
     if (!dirty(record)) record.recovered = false;
   }
   async function commit(id, key) {
-    if (disposed) return false;
+    if (lifetime.disposed) return false;
     const record = ensure(id);
     const scope = record.key;
     if (!canRead(record.page) || !canWrite() || key !== undefined && record.recovered) return false;
     if (requests.has(scope)) {
+      const current = captureRecord(record);
       const result = await requests.get(scope);
-      if (!result || scope !== recordKey(id)) return false;
+      if (!result || !current()) return false;
       return commit(id, key); // serial admission; an acknowledged edit is deduplicated below
     }
     if (wires.has(scope) || blockingLoad(record) || reviews.has(scope)) return false;
@@ -260,12 +270,13 @@ export function createSettingsPageState({ registry, confirm, getSession = () => 
     const submitted = { page: record.page, session: record.session, key: record.key, values: copy(envelope(record)), revision: record.revision, sourceKey: record.sourceKey, versions };
     record.submitted = submitted;
     ++record.generation; // late GETs cannot overwrite an admitted edit/PUT
+    const current = captureRecord(record).bind(canWrite);
     record.status = "saving";
     let observed = false;
-    const original = wire({ ...submitted, kind: "write" });
+    const original = wire({ ...submitted, kind: "write", current });
     wires.set(scope, original);
     original.then(result => {
-      if (!observed && !disposed && record.uncertain && wires.get(scope) === original) acknowledge(record, submitted, result);
+      if (!observed && current() && record.uncertain && wires.get(scope) === original) acknowledge(record, submitted, result);
     }, () => { /* Unknown decisions remain retained for explicit read-back. */ })
       .finally(() => { if (wires.get(scope) === original) wires.delete(scope); adoptDescriptor(record); })
       .catch(() => { /* Malformed late data is not an acknowledgement. */ });
@@ -273,10 +284,10 @@ export function createSettingsPageState({ registry, confirm, getSession = () => 
       try {
         const result = await bounded(() => original);
         observed = true;
-        if (!disposed) acknowledge(record, submitted, result);
+        if (current()) acknowledge(record, submitted, result);
         return true;
       } catch (error) {
-        if (!disposed) {
+        if (current()) {
           record.status = error.response?.status === 409 ? "conflict" : "error";
           record.message = error.response?.data?.detail ?? error.message;
           if (!error.clientScopeRetired && (!error.response || error.response.data?.code === "plugin_settings_source_commit_failed")) record.uncertain = submitted;
@@ -289,21 +300,21 @@ export function createSettingsPageState({ registry, confirm, getSession = () => 
   }
   function retryAdmissible(record) {
     const { key } = record;
-    return !disposed && !record.retired && canRead(record.page) && canWrite() && !wires.has(key) && !requests.has(key) && !blockingLoad(record) && !reviews.has(key) &&
+    return !lifetime.disposed && !record.retired && canRead(record.page) && canWrite() && !wires.has(key) && !requests.has(key) && !blockingLoad(record) && !reviews.has(key) &&
       !(loads.has(key) && record.uncertain) && record.available &&
       !!(record.uncertain || (!record.changedDescriptor && record.status !== "conflict"));
   }
   async function retry(id) {
-    if (disposed) return false;
+    if (lifetime.disposed) return false;
     const record = ensure(id);
     const { key } = record;
     if (!retryAdmissible(record)) return false;
     if (record.uncertain) {
-      const submitted = record.uncertain, generation = record.generation;
+      const submitted = record.uncertain, current = captureRecord(record).bind(() => record.uncertain);
       reviews.set(key, submitted);
       try {
-        const result = await bounded(() => wire({ kind: "read", page: record.page, session: record.session, key }));
-        if (disposed || record.session !== getSession() || generation !== record.generation || record.uncertain !== submitted) return false;
+        const result = await bounded(() => wire({ kind: "read", page: record.page, current }));
+        if (!current()) return false;
         if (result.revision === submitted.revision && submitted.sourceKey !== undefined && result.sourceKey !== submitted.sourceKey) {
           record.uncertain = null;
           record.retiredSubmission = submitted;
@@ -330,14 +341,14 @@ export function createSettingsPageState({ registry, confirm, getSession = () => 
           record.fields = copy(result.fields ?? {});
           record.uncertain = null;
         }
-      } catch (error) { record.message = error.message; return false; }
+      } catch (error) { if (current()) record.message = error.message; return false; }
       finally { if (reviews.get(key) === submitted) reviews.delete(key); adoptDescriptor(record); }
     }
     if (!dirty(record) && !record.uncertain) return true;
     return commit(id);
   }
   async function resolveDeparture(ids, reason, confirmedDecision) {
-    const session = getSession(), selected = ids.map(id => records.get(recordKey(id))).filter(Boolean);
+    const current = capture(), selected = ids.map(id => records.get(recordKey(id))).filter(Boolean);
     for (const { key } of selected) if (requests.has(key)) await requests.get(key);
     for (const { key } of selected) {
       if (wires.has(key)) {
@@ -345,16 +356,16 @@ export function createSettingsPageState({ registry, confirm, getSession = () => 
         if (wires.has(key)) return false;
       }
     }
-    if (session !== getSession() || selected.some(record => record.uncertain)) return false;
+    if (!current() || selected.some(record => record.uncertain)) return false;
     const changed = selected.filter(dirty);
     if (!changed.length) return true;
     // A session participant may supply the decision already collected by
     // its own confirmation. This is explicit permission, never force-discard.
     const decision = confirmedDecision ?? await confirm({ reason, pages: changed.map(({ id }) => snapshot(id)), canSave: changed.every(({ id }) => snapshot(id).canSave) });
-    if (session !== getSession()) return false;
+    if (!current()) return false;
     if (decision === "save" || decision === "retry") {
-      for (const { id } of changed) if (session !== getSession() || !await retry(id)) return false;
-      return changed.every(record => !dirty(record));
+      for (const { id } of changed) if (!current() || !await retry(id)) return false;
+      return current() && changed.every(record => !dirty(record));
     }
     if (decision !== "discard") return false;
     for (const record of changed) {
@@ -394,6 +405,6 @@ export function createSettingsPageState({ registry, confirm, getSession = () => 
     pageIds: () => currentRecords().map(record => record.id),
     hasWork: () => currentRecords().some(record => dirty(record) || record.status === "saving" || wires.has(record.key) || record.uncertain),
     recoveryPages: () => currentRecords().filter(record => !record.available && dirty(record)).map(record => record.page),
-    dispose() { disposed = true; stopSession(); retained.clear(); for (const record of records.values()) ++record.generation; return operations.dispose(); },
+    dispose() { lifetime.dispose(); stopSession(); retained.clear(); records.clear(); return operations.dispose(); },
   };
 }

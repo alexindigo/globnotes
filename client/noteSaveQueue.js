@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-only
+import { createSessionContext } from "./sessionContext.js";
 // Pure per-edit-session FIFO. Transport and every application effect are injected.
 export const NOTE_SAVE_OBSERVATION_MS = 60_000;
 
@@ -31,10 +32,11 @@ export function createNoteSaveQueue(adapters) {
   const setTimer = adapters.setTimer ?? setTimeout;
   const clearTimer = adapters.clearTimer ?? clearTimeout;
   const sessionId = adapters.sessionId;
-  let serial = 0, generation = 0, failureSerial = 0;
+  const lifetime = createSessionContext();
+  let serial = 0, failureSerial = 0;
   let status = "idle", active = null, failure = null, disposed = false, rebaseConflict = false;
   let acknowledged = adapters.initial ? immutable(adapters.initial) : null;
-  let baseContent = acknowledged?.content;
+  let baseContent = adapters.baseContent ?? acknowledged?.content;
   let acknowledgedPathRevision = -1;
   const queued = [];
   const jobs = new Set();
@@ -57,6 +59,7 @@ export function createNoteSaveQueue(adapters) {
     return null;
   }
   function notify() {
+    if (disposed) return;
     adapters.changed?.(state());
     const result = observationResult();
     if (result) for (const waiter of [...waiters]) waiter.finish(result);
@@ -84,7 +87,7 @@ export function createNoteSaveQueue(adapters) {
   async function observe(job, phase, operation) {
     let timer;
     timer = setTimer(() => {
-      if (disposed || job !== active || job.token !== generation) return;
+      if (!job.current()) return;
       job.timedOut = true;
       pause(job, new Error("Save observation deadline exceeded; work is retained."), phase === "sending" ? "unknown" : "known-unsent", phase);
     }, adapters.observationMs ?? NOTE_SAVE_OBSERVATION_MS);
@@ -108,18 +111,28 @@ export function createNoteSaveQueue(adapters) {
     return acknowledged && snapshot.pathRevision <= acknowledgedPathRevision
       ? acknowledged.path : snapshot.requestedPath;
   }
+  async function release(job) {
+    try { await adapters.releaseSend?.(job.snapshot); }
+    catch (error) {
+      // Cleanup is not another outcome of the write. A failed diagnostic
+      // must not replace either the receipt or the FIFO's own state.
+      if (!job.current()) return;
+      try { (adapters.cleanupFailed ?? console.error)(error, job.snapshot); }
+      catch (reportingError) { console.error(reportingError); }
+    }
+  }
   async function pump() {
     if (pumping || disposed || status === "paused" || rebaseConflict) return;
     pumping = true;
-    const pumpGeneration = generation;
+    const currentPump = lifetime.capture();
     let drainedJob = null;
     try {
       while (!disposed && status !== "paused" && !rebaseConflict && queued.length) {
-        const job = queued.shift(); active = job; job.token = generation;
+        const job = queued.shift(); active = job; job.current = currentPump.bind(() => active);
         const snapshot = job.snapshot;
         const context = Object.freeze({ acknowledged, baseContent, sourcePath: acknowledged?.path ?? null,
           targetPath: acknowledged && snapshot.intent === "save" ? acknowledged.path : admittedPath(snapshot),
-          isPreparationCurrent: () => !disposed && active === job && job.token === generation && !job.timedOut && job.phase === "preparing" && status === "preparing" });
+          isPreparationCurrent: () => job.current() && !job.timedOut && job.phase === "preparing" && status === "preparing" });
         job.phase = "preparing"; status = "preparing"; notify();
         let prepared;
         try {
@@ -134,16 +147,16 @@ export function createNoteSaveQueue(adapters) {
         try {
           result = validAck(await observe(job, "sending", () => adapters.send(snapshot, context, prepared)));
         } catch (error) {
-          await adapters.releaseSend?.(snapshot);
+          await release(job);
           job.inFlight = false;
-          if (!disposed && job.token === generation) pause(job, error, classifyNoteSaveFailure(error, "sending"), "sending");
+          if (job.current()) pause(job, error, classifyNoteSaveFailure(error, "sending"), "sending");
           break;
         }
         job.inFlight = false;
-        if (disposed || job.token !== generation) { await adapters.releaseSend?.(snapshot); break; }
+        if (!job.current()) { await release(job); break; }
         if (result.committed === true) {
-          await adapters.releaseSend?.(snapshot);
-          if (disposed || job.token !== generation) break;
+          await release(job);
+          if (!job.current()) break;
           // The effect succeeded but the current base cannot be disclosed.
           // Preserve the draft and block all queued saves until read-back.
           pause(job, new Error("Save committed, but the saved note is no longer available to this session. Read it again before editing."), "known-committed", "receipt", result);
@@ -156,14 +169,15 @@ export function createNoteSaveQueue(adapters) {
         const holdQueued = result.saveResult?.status !== "conflict" && context.sourcePath && context.sourcePath !== result.path && snapshot.content !== result.content && queued.length > 0;
         job.phase = "acknowledging";
         const late = job.timedOut;
-        try {
-          const integration = await adapters.acknowledge?.(snapshot, result, { ...context, late });
-          baseContent = integration?.baseContent ?? result.content;
-          if (holdQueued || integration?.rebaseConflict) blockRebase();
-        }
-        catch (error) { pause(job, error, "known-committed", "acknowledging"); break; }
-        finally { await adapters.releaseSend?.(snapshot); }
-        if (disposed || job.token !== generation) break;
+        let integration, integrationFailure;
+        try { integration = await adapters.acknowledge?.(snapshot, result, { ...context, late }); }
+        catch (error) { integrationFailure = { error }; }
+        finally { await release(job); }
+        if (!job.current()) break;
+        if (integrationFailure) { pause(job, integrationFailure.error, "known-committed", "acknowledging", result); break; }
+        baseContent = integration?.baseContent ?? result.content;
+        if (holdQueued || integration?.rebaseConflict) blockRebase();
+        if (!job.current()) break;
         job.phase = "acknowledged";
         job.outcome = Object.freeze({ status: "acknowledged", result, late });
         finishReceipt(job, job.outcome);
@@ -182,18 +196,17 @@ export function createNoteSaveQueue(adapters) {
         if (rebaseConflict) { status = "idle"; notify(); }
         if (queued.length || rebaseConflict) { jobs.delete(job); drainedJob = null; }
       }
-      if (!disposed && status !== "paused" && !active && !queued.length) { status = "idle"; notify(); }
+      if (currentPump() && status !== "paused" && !active && !queued.length) { status = "idle"; notify(); }
     } finally {
-      if (pumpGeneration === generation) pumping = false;
-      if (!disposed && pumpGeneration === generation && status === "idle" && drainedJob) {
-        const ownerGeneration = generation;
+      if (currentPump()) pumping = false;
+      if (currentPump() && status === "idle" && drainedJob) {
         Promise.resolve().then(async () => {
-          if (!disposed && ownerGeneration === generation && status === "idle") return adapters.drained?.(drainedJob.snapshot, state());
+          if (currentPump() && status === "idle") return adapters.drained?.(drainedJob.snapshot, state());
         }).then(() => {
           jobs.delete(drainedJob);
-          if (!disposed && ownerGeneration === generation) notify();
+          if (currentPump()) notify();
         })
-          .catch(error => { if (!disposed && ownerGeneration === generation) pause(drainedJob, error, "known-committed", "integration"); });
+          .catch(error => { if (currentPump()) pause(drainedJob, error, "known-committed", "integration"); });
       }
     }
   }
@@ -204,13 +217,14 @@ export function createNoteSaveQueue(adapters) {
       if (typeof snapshot.content !== "string" || typeof snapshot.requestedPath !== "string" || !Number.isSafeInteger(snapshot.pathRevision)) throw new Error("Invalid Save snapshot");
       let resolve;
       const completion = new Promise(yes => { resolve = yes; });
-      const job = { snapshot, resolve, phase: "queued", outcome: null, inFlight: false, token: generation };
+      const job = { snapshot, resolve, phase: "queued", outcome: null, inFlight: false };
       jobs.add(job); queued.push(job);
       const receipt = Object.freeze({ sessionId, submissionId: snapshot.submissionId, completion, held: status === "paused" || rebaseConflict });
       notify(); pump();
       return receipt;
     },
     state,
+    baseContent: () => baseContent,
     admittedPath,
     /** Only an unsent preparation or inspected pre-write auth rejection can release this barrier.
      * The failed snapshot, FIFO position and acknowledged base are unchanged.
@@ -246,8 +260,8 @@ export function createNoteSaveQueue(adapters) {
     },
     // Explicit, disclosed Discard is a separate permission, never disposal.
     discard() {
-      if (!state().canDiscard) return false;
-      generation++;
+      if (disposed || !state().canDiscard) return false;
+      lifetime.advanceProjection();
       for (const job of [active, ...queued].filter(Boolean)) { clearTimer(job.observationTimer); finishReceipt(job, { status: "discarded", safe: true }); }
       pumping = false;
       baseContent = acknowledged?.content;
@@ -256,7 +270,7 @@ export function createNoteSaveQueue(adapters) {
     },
     dispose() {
       if (disposed) return;
-      disposed = true; generation++;
+      disposed = true; lifetime.dispose();
       for (const job of jobs) { clearTimer(job.observationTimer); finishReceipt(job, { status: "disposed", safe: false }); }
       for (const waiter of [...waiters]) waiter.finish({ status: "disposed", safe: false });
     },

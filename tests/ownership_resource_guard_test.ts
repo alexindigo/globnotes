@@ -121,6 +121,7 @@ Deno.test("G5 registration: actual browser owner, pilot and contract retain thei
       "./bus/index.js",
       "./connectionLifetime.js",
       "./operationOwner.js",
+      "./sessionContext.js",
       "./connectionLifetime.js",
     ],
     [BROWSER_OPERATION_CONTRACT]: [

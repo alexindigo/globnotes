@@ -49,6 +49,86 @@ function flow(f, overrides = {}) {
   return { login, ...adapters };
 }
 
+it("a retired transport admits only credential recovery even while the old token is stored", async () => {
+  const get = vi.fn(async () => ({ data: projection() })), request = vi.fn(async () => ({ data: {} }));
+  const open = vi.fn(async () => Response.json({ entries: [], next: 0 }));
+  const api = createIdentityApi({ sessionKey: () => null, tokens: { getStoredToken: () => "alice.jwt" }, http: { get, request }, fetch: open });
+  const results = await Promise.allSettled([api.read("notes"), api.write("put", "notes", {}),
+    api.openVaultChanges({ onEvent() {} }).then(async close => { await close(); }), api.getConfig()]);
+  expect(results.map(({ status }) => status)).toEqual(["rejected", "rejected", "rejected", "fulfilled"]);
+  expect(get.mock.calls).toEqual([["config", { headers: { Authorization: "Bearer alice.jwt" } }]]);
+  expect([request.mock.calls, open.mock.calls]).toEqual([[], []]);
+});
+
+it("retaining a 403's dirty work cannot retire a replacement installed by the participant", async () => {
+  const current = ref(projection()), refusal = Error("denied"); refusal.status = 403;
+  const get = vi.fn(async () => { throw refusal; });
+  const session = createIdentityAppSession({ config: () => current.value, setConfig: value => { current.value = value; },
+    tokens: { getStoredToken: () => "opaque" }, http: { get }, applyBrand() {} });
+  cleanups.push(() => session.dispose()); session.adopt(current.value);
+  cleanups.push(registerSessionParticipant("replacement", { hasUnsavedChanges: () => true,
+    retainForAuthentication() { session.adopt(projection("bob")); } }));
+  await expect(session.transport.read("notes")).rejects.toBe(refusal);
+  expect([session.state.valid, current.value.accountId, get.mock.calls.map(([path]) => path)]).toEqual([true, "bob", ["notes"]]);
+});
+
+it("reports the initial config installation error from the adoption that owns it", async () => {
+  const failure = Error("cannot install config"), failed = vi.fn();
+  const session = createIdentityAppSession({ config: () => ({}), setConfig: () => { throw failure; }, failed,
+    tokens: { getStoredToken: () => null }, transport: { getConfig: async () => projection(null) } });
+  cleanups.push(() => session.dispose());
+  expect(await session.load()).toBe(false);
+  expect(failed).toHaveBeenCalledExactlyOnceWith(failure);
+  expect([session.state.ready, session.state.valid]).toEqual([false, false]);
+});
+
+it("navigates and completes the shared logout before anonymous config answers", async () => {
+  let release, entered;
+  const answer = new Promise(resolve => { release = resolve; });
+  const started = new Promise(resolve => { entered = resolve; });
+  const f = app({ transport: { getConfig: () => { entered(); return answer; } } });
+  const logout = f.session.logout();
+  try {
+    expect(f.session.logout()).toBe(logout);
+    await started;
+    expect(f.events.filter(value => value === "login")).toEqual(["login"]);
+    expect(await logout).toBe(true);
+    f.session.acceptToken("bob.jwt", false); f.session.adopt(projection("bob"));
+  } finally { release(projection(null)); await f.session.settle(); }
+  expect([f.current.value.accountId, f.tokens.getStoredToken()]).toEqual(["bob", "bob.jwt"]);
+});
+
+it("awaits and reports an asynchronous accepted login callback rejection", async () => {
+  let resolveEntered, rejectCallback;
+  const entered = new Promise(resolve => { resolveEntered = resolve; });
+  const callback = new Promise((_, reject) => { rejectCallback = reject; });
+  // Keep the test-owned promise observed even in the broken flow.
+  callback.catch(() => {});
+  const failure = Error("navigation rejected"), reportError = vi.fn();
+  const f = app({ transport: { getToken: async () => "bob.jwt", getConfig: async () => projection("bob") } });
+  const login = flow(f, { reportError, authenticated: () => { resolveEntered(); return callback; } });
+  const completing = login.login.logIn();
+  await entered;
+  rejectCallback(failure);
+  await completing;
+  expect(reportError).toHaveBeenCalledExactlyOnceWith(failure, login.toast);
+  expect(login.clearCredentials).toHaveBeenCalledExactlyOnceWith();
+});
+
+it("a cursor cannot open as Bob before Bob's stream session has been installed", async () => {
+  let identity = null;
+  const opens = [], events = [];
+  const changes = createVaultChanges({ sessionKey: () => identity, open: async options => { opens.push(options); return () => {}; }, publish: (...args) => events.push(args) });
+  cleanups.push(() => changes.dispose()); changes.acquire(); await changes.settle();
+  identity = "alice"; changes.setSession(identity); await changes.settle();
+  opens.at(-1).onEvent({ event: "cursor", data: { next: 17 } });
+  identity = "bob"; changes.restart(); await changes.settle();
+  changes.setSession(identity); await changes.settle();
+  const change = { seq: 1, path: "B.md" };
+  opens.at(-1).onEvent({ event: "change", data: change });
+  expect([opens.map(({ since }) => since), events.map(([, value]) => value)]).toEqual([[0, 0], [change]]);
+});
+
 it("session keys use only safe facts; reader runtime and Admin permission review are independent", () => {
   const view = projection(), admin = projection("alice", "admin");
   expect([readerRuntimeEligibility(true, view, "home", null), permissionEligibility(true, view, "home", "raw-token"), permissionEligibility(true, admin, "home", null)]).toEqual([true, false, true]);
@@ -114,22 +194,21 @@ it("sign-in waits for participants before proof, then adopts the new safe sessio
 it("a logout's delayed anonymous config cannot clear or navigate over Bob's replacement sign-in", async () => {
   let hold; const f = app({ transport: { getConfig: async () => { await hold(); return projection(null); } } });
   await heldOperation(controlled("anonymous logout config", f.session), boundary => { hold = boundary; return f.session.logout(); }, async work => {
-    await work.reached(); expect(f.tokens.getStoredToken()).toBeNull();
+    await work.reached(); expect(f.tokens.getStoredToken()).toBeNull(); expect(f.events.filter(value => value === "login")).toEqual(["login"]);
     f.session.acceptToken("bob.jwt", false); f.session.adopt(projection("bob", "none"));
-    expect(await work.result()).toBe(false); expect(f.current.value).toEqual(projection("bob", "none")); expect(f.tokens.getStoredToken()).toBe("bob.jwt"); expect(f.events.filter(value => value === "login")).toEqual([]);
+    expect(await work.result()).toBe(true); await f.session.settle();
+    expect(f.current.value).toEqual(projection("bob", "none")); expect(f.tokens.getStoredToken()).toBe("bob.jwt"); expect(f.events.filter(value => value === "login")).toEqual(["login"]);
   });
 });
 it("logout keeps its shared completion and reaches ordinary sign-in when the anonymous refresh fails", async () => {
-  let hold;
   const error = new Error("offline");
-  const f = app({ transport: { getConfig: async () => { await hold(); throw error; } } });
-  await heldOperation(controlled("logout outage", f.session), boundary => { hold = boundary; return f.session.logout(); }, async work => {
-    await work.reached();
-    const pending = f.session.logout();
-    expect(f.session.logout()).toBe(pending);
-    expect(await work.result()).toBe(true); expect(await pending).toBe(true);
-    expect([f.tokens.getStoredToken(), f.session.state.valid, f.events.filter(value => value === "login")]).toEqual([null, false, ["login"]]);
-  });
+  const getConfig = vi.fn(async () => { throw error; });
+  const f = app({ transport: { getConfig } });
+  const pending = f.session.logout();
+  expect(f.session.logout()).toBe(pending); expect(await pending).toBe(true);
+  await f.session.settle();
+  expect(getConfig).toHaveBeenCalledExactlyOnceWith();
+  expect([f.tokens.getStoredToken(), f.session.state.valid, f.events.filter(value => value === "login")]).toEqual([null, false, ["login"]]);
 });
 it.each([false, true])("every ordinary/gap poll callback has its own final fence (gap=%s)", async gap => {
   let scope = "alice"; const delivered = [], closed = vi.fn();
@@ -387,7 +466,8 @@ it.each(["same Admin", "same login, different account", "demoted", "different va
   const current = ref(original), writes = [], reads = [];
   let hold;
   const settings = createSettingsPageState({
-    getSession: () => current.value?.credential ?? null,
+    getSession: () => current.value?.credential ?? "guest",
+    isGuest: () => current.value === null,
     getRecoveryScope: () => current.value?.admin ? JSON.stringify([current.value.account, current.value.vault]) : null,
     canRead: () => current.value?.admin === true, canWrite: () => current.value?.admin === true,
     registry: { find: () => page, async read() {
