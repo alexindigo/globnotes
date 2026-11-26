@@ -235,7 +235,7 @@ async function constructPluginOperationsFixture(
         action: fact.action,
       },
       undefined,
-      { viewer, causal: { depth: fact.causalDepth ?? 0 } },
+      { viewer },
     )
   );
   await runtime.reconcile();

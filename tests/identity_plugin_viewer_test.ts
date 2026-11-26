@@ -26,9 +26,15 @@ import { createIdentityNoteRender } from "../server/api/endpoints/_/api/render/%
 import { createIdentityRender } from "../server/api/endpoints/_/api/render/post.ts";
 import { createIdentityPluginCommand } from "../server/api/endpoints/_/api/plugin-host/%23id/commands/%23command/post.ts";
 import { OperationError } from "../server/plugins/errors.ts";
+import { METADATA_LIMITS } from "../server/metadata/contracts.ts";
+import { WorkerDeliveryGate } from "./helpers/worker_liveness.ts";
 
 const source =
-  `let status=Promise.withResolvers();export function activate(ctx){
+  `let status=Promise.withResolvers(), fsOutcome, observedCause=Promise.withResolvers();export function activate(ctx){
+  const follow = kind => ctx.actions.request('create',{path:'causal-output',content:kind,base:{kind:'absent'}});
+  ctx.hooks.on('on-create',fact=>{if(fact.path==='causal-input')return follow('create');if(fact.path==='causal-output')observedCause.resolve([fact.causalParent,fact.causalDepth]);});
+  ctx.hooks.on('on-sync',fact=>{if(fact.operationId==='source-sync')return follow('sync');});
+  ctx.commands.register({id:'causal-result',label:'Causal result',target:'server'},()=>observedCause.promise);
   ctx.commands.register({id:'echo',label:'Echo',target:'server'},payload=>payload);
   ctx.commands.register({id:'timer',label:'Timer',target:'server'},()=>{
     status=Promise.withResolvers();ctx.timers.setTimeout(async()=>{try{await ctx.readNote('gate');
@@ -38,26 +44,40 @@ const source =
   ctx.commands.register({id:'background',label:'Background',target:'server'},()=>ctx.actions.request('create',{path:'background-output',content:'independent',base:{kind:'absent'}}));
   ctx.commands.register({id:'private-write',label:'Private',target:'server'},()=>ctx.data.save({value:'private'},0));
   ctx.commands.register({id:'status',label:'Status',target:'server'},()=>status.promise);
+  ctx.commands.register({id:'fs-outcome',label:'FS outcome',target:'server'},()=>fsOutcome);
+  ctx.commands.register({id:'fs-write',label:'FS write',target:'server'},async path=>{
+    try{fsOutcome={result:await ctx.fs.writeFile(path,new Uint8Array([65]),{expect:{kind:'absent'}})};}
+    catch({status,code,effect}){fsOutcome={status,code,effect};}
+    return fsOutcome;});
   ctx.commands.register({id:'settle-action',label:'Settle action',target:'server'},async id=>{for(;;){const receipt=await ctx.actions.result(id);if(!['accepted','running'].includes(receipt.status))return receipt;await new Promise(resolve=>ctx.timers.setTimeout(resolve,0));}});
 }`;
 
 async function withViewer(run: (f: ViewerFixture) => Promise<void>) {
   let hold: (() => Promise<void>) | undefined;
+  let writeHold: (() => Promise<void>) | undefined;
   await withPluginOperationsFixture({
     id: "viewer",
     manifest: {
       runtime: { server: "service.js" },
-      capabilities: { read: ["vault"], write: ["vault"] },
+      hooks: ["on-create", "on-sync"],
+      capabilities: {
+        read: ["vault"],
+        write: ["vault"],
+        filesystem: { read: ["vault"], write: ["vault"] },
+      },
     },
     files: {
       "service.js": source,
       "endpoints/get.js":
-        `export default async function(request,ctx){let outcome,requestId;try{requestId=(await ctx.actions.request('create',{path:'endpoint-output',content:'endpoint-live-edit',base:{kind:'absent'}})).requestId;outcome='accepted';}catch{outcome='denied';}return {outcome,requestId,headers:request.headers,snapshot:ctx.snapshot};}`,
+        `export default async function(request,ctx){if(request.query.length){await ctx.readNote('gate');return 'private';}let outcome,requestId;try{requestId=(await ctx.actions.request('create',{path:'endpoint-output',content:'endpoint-live-edit',base:{kind:'absent'}})).requestId;outcome='accepted';}catch{outcome='denied';}return {outcome,requestId,headers:request.headers,snapshot:ctx.snapshot};}`,
     },
     fault: async (method, args, boundary) => {
       if (
         method === "readNote" && args[0] === "gate" && boundary === "before"
       ) await hold?.();
+      if (method === "fs.writeFile" && boundary === "after") {
+        await writeHold?.();
+      }
     },
   }, async (f) => {
     await credentialCommandFixture(async (identity) => {
@@ -111,6 +131,9 @@ async function withViewer(run: (f: ViewerFixture) => Promise<void>) {
         hold: (value) => {
           hold = value;
         },
+        holdWrite: (value) => {
+          writeHold = value;
+        },
         policy: (level) =>
           acl.save(
             { everybody: "none", grants: { [ACCOUNT_A]: level } },
@@ -138,6 +161,7 @@ type ViewerFixture = PluginFixture & {
   lifetime: ReturnType<typeof createOperationLease<"live">>;
   replace(): void;
   hold(value: () => Promise<void>): void;
+  holdWrite(value: () => Promise<void>): void;
   policy(level: "view" | "edit" | "admin" | "none"): unknown;
   commandAsViewer(command: string): Promise<unknown>;
 };
@@ -149,6 +173,31 @@ function absent(filename: string): boolean {
     if (error instanceof Deno.errors.NotFound) return true;
     throw error;
   }
+}
+
+for (const action of ["create", "sync"] as const) {
+  Deno.test(`identity viewer: ${action} observer retains its source operation parent`, () =>
+    withViewer(async (f) => {
+      f.policy("edit");
+      const fact = {
+        operationId: `source-${action}`,
+        action,
+        path: "causal-input",
+        origin: "api" as const,
+        timestamp: "2026-01-01T00:00:00Z",
+        causalDepth: 2,
+      };
+      if (fact.action === "sync") await f.manager.syncAll(fact, f.viewer);
+      else f.lifecycle.observe(fact);
+      // The observer publishing the final fact uses the ordinary Worker lane.
+      // Read only after the durable consumer exists so the query cannot hold it up.
+      const filename = `${f.fixture.vault}/causal-output.md`;
+      await waitUntil(() => absent(filename) ? pending(filename) : done(), {
+        label: "observer action published its note",
+      });
+      assertEquals(Deno.readTextFileSync(filename), action);
+      assertEquals(await f.command("causal-result"), [fact.operationId, 3]);
+    }));
 }
 
 for (
@@ -305,6 +354,58 @@ Deno.test("identity viewer: GET proxy captures caller and Worker envelopes conta
       Deno.readTextFileSync(`${f.fixture.vault}/endpoint-output.md`),
       "endpoint-live-edit",
     );
+    await heldOperation({
+      label: "admitted plugin proxy handler",
+      owner: () => f.runtime,
+      progress: { kind: "product" },
+      signal: f.scope.signal,
+    }, (hold) => {
+      f.hold(hold);
+      return proxy({ ...request(), query: new URLSearchParams("hold=1") });
+    }, async (operation) => {
+      await operation.reached();
+      f.identity.now = f.token.principal.expiresAt;
+      const refused = await assertRejects(
+        operation.result,
+        HttpError,
+        "HTTP 401",
+      );
+      assertEquals(refused.status, 401);
+    });
+  }));
+
+Deno.test("identity viewer: filesystem refusal preserves effect status and no success token", () =>
+  withViewer(async (f) => {
+    const invoke = (name: string) =>
+      f.runtime.invokeCommand(f.id, "fs-write", name, f.viewer);
+    const filename = `${f.fixture.vault}/effect.bin`;
+    f.policy("view");
+    assertEquals(await invoke("effect.bin"), {
+      status: 403,
+      code: "fs_denied",
+      effect: "none",
+    });
+    assertEquals(absent(filename), true);
+    f.policy("edit");
+    await heldOperation({
+      label: "committed filesystem reply",
+      owner: () => f.runtime,
+      progress: { kind: "product" },
+      signal: f.scope.signal,
+    }, (hold) => {
+      f.holdWrite(hold);
+      return invoke("effect.bin");
+    }, async (operation) => {
+      await operation.reached();
+      assertEquals(Deno.readTextFileSync(filename), "A");
+      f.policy("view");
+      assertEquals(await operation.result(), {
+        status: 409,
+        code: "fs_generation_revoked",
+        effect: "committed",
+      });
+      assertEquals(Deno.readTextFileSync(filename), "A");
+    });
   }));
 
 Deno.test("identity viewer: fresh bundle projections, replacement and prepared render consumption", () =>
@@ -407,6 +508,134 @@ Deno.test("identity viewer: concrete bundle replacement retires its retained ref
     );
   }));
 
+Deno.test("identity viewer: denied sync does not take healthy render replicas out of service", () =>
+  withViewer(async (f) => {
+    await withPluginFixture(async (fixture, scope) => {
+      const dir = await fixture.install("render", { entry: "render.js" }, {
+        "render.js":
+          `let syncs=0;export async function onSync(ctx){await ctx.readNote('sync');syncs++;}export function parseNode(){return syncs;}`,
+      });
+      let syncHold: (() => Promise<void>) | undefined;
+      const host = (await scope.acquire(() =>
+        new PluginHost(readManifest(dir), fixture.vault, async () => {
+          await syncHold?.();
+          return null;
+        }, 1), (host) =>
+        host.stop())).value;
+      await host.start();
+      await hostInitialized(host);
+      const generations = host.generations;
+      assertEquals(await host.call("parseNode", []), 1);
+      await heldOperation({
+        label: "viewer sync inside shared render replica",
+        owner: () =>
+          host,
+        progress: { kind: "product" },
+        signal: scope.signal,
+      }, (hold) => {
+        syncHold = hold;
+        return host.syncAll(f.viewer);
+      }, async (operation) => {
+        await operation.reached();
+        f.policy("none");
+        assertEquals(f.viewer.sessionCurrent(), true);
+        await operation.result();
+      });
+      // The same denied viewer also cannot dispatch a subsequent sync.
+      await host.syncAll(f.viewer);
+      f.policy("view");
+      const otherViewer = f.authority.viewer(f.token.principal);
+      assertEquals(
+        await host.call("parseNode", [], { viewer: otherViewer }),
+        1,
+      );
+      assertEquals(host.generations, generations);
+    });
+  }));
+
+Deno.test("identity viewer: cancellation during timer begin prevents callback entry", () =>
+  withViewer(async (f) => {
+    await withPluginFixture(async (fixture, scope) => {
+      const gate = (await scope.acquire(() =>
+        new WorkerDeliveryGate(), (gate) =>
+        gate.restore())).value;
+      gate.holdHeartbeat = false;
+      const dir = await fixture.install("timer-race", {
+        runtime: { server: "service.js" },
+      }, {
+        "service.js": `let dispose, entries=0;export function activate(ctx){
+          ctx.commands.register({id:'arm',label:'Arm',target:'server'},()=>{dispose=ctx.timers.setTimeout(()=>{entries++;},0);});
+          ctx.commands.register({id:'cancel',label:'Cancel',target:'server'},()=>{dispose();return entries;});
+          ctx.commands.register({id:'entries',label:'Entries',target:'server'},()=>entries);
+        }`,
+      });
+      const host = (await scope.acquire(() =>
+        new PluginHost(
+          readManifest(dir),
+          fixture.vault,
+          () =>
+            Promise.resolve(null),
+          1,
+          { role: "service" },
+        ), (host) =>
+        host.stop())).value;
+      await host.start();
+      await hostInitialized(host);
+      const command = (name: string, viewer?: ViewerFixture["viewer"]) =>
+        host.invoke(
+          [...host.registrations].find(([, value]) => value.id === name)![0],
+          [],
+          false,
+          host.limits.serviceCallMs,
+          { viewer },
+        );
+      let begin: { id: number; parent: string } | undefined;
+      let reply: (() => void) | undefined;
+      let releasedParent: (() => void) | undefined;
+      let firing: string | undefined, releasedFiring = false;
+      gate.holdInbound = (message, deliver) => {
+        if (message.type !== "rpc") return false;
+        if (message.method === "context.begin") {
+          begin = { id: message.id, parent: message.contextId };
+        }
+        if (message.method === "context.release") {
+          if (message.contextId === begin?.parent) {
+            releasedParent = deliver;
+            return true;
+          }
+          if (message.contextId === firing) releasedFiring = true;
+        }
+        return false;
+      };
+      gate.holdOutbound = (message, deliver) => {
+        if (message.type !== "rpcResponse" || message.id !== begin?.id) {
+          return false;
+        }
+        assert(message.ok, "must hold a successful firing admission");
+        firing = (message.value as { id: string }).id;
+        reply = deliver;
+        return true;
+      };
+      await command("arm", f.viewer);
+      await waitUntil(() => reply ? done() : pending(begin), {
+        label: "successful timer begin reply held",
+      });
+      assertEquals(host.continuationCount, 1);
+      assertEquals(await command("cancel"), 0);
+      assert(
+        releasedParent,
+        "the disposer must have requested release while begin was held",
+      );
+      reply!();
+      await waitUntil(() => releasedFiring ? done() : pending(firing), {
+        label: "firing context released after reply",
+      });
+      assertEquals(await command("entries"), 0);
+      releasedParent();
+      assertEquals(await command("entries"), 0);
+    });
+  }));
+
 Deno.test("identity viewer: registration cancellation, cap reuse and full retirement", () =>
   withViewer(async (f) => {
     await withPluginFixture(async (fixture, scope) => {
@@ -414,7 +643,9 @@ Deno.test("identity viewer: registration cancellation, cap reuse and full retire
         runtime: { server: "service.js" },
       }, {
         "service.js":
-          `let cancel=[];export function activate(ctx){ctx.commands.register({id:'arm',label:'Arm',target:'server'},n=>{for(let i=0;i<n;i++)cancel.push(ctx.timers.setInterval(()=>{},60000));});ctx.commands.register({id:'cancel-pending',label:'Cancel pending',target:'server'},()=>{const cancel=ctx.timers.setTimeout(()=>{throw new Error('cancelled timer fired');},0);cancel();});ctx.commands.register({id:'clear',label:'Clear',target:'server'},async()=>{await Promise.all(cancel.splice(0).map(f=>f()));});ctx.commands.register({id:'late',label:'Late',target:'server'},()=>{ctx.commands.register({id:'late-registered',label:'Late registered',target:'server'},()=>'incorrect');return 'returned';});}`,
+          `let cancel=[], cancelledEntries=0;export function activate(ctx){
+            for(let i=0;i<${METADATA_LIMITS.watches};i++)ctx.metadata.watch({offset:i},()=>{});
+            ctx.commands.register({id:'arm',label:'Arm',target:'server'},n=>{for(let i=0;i<n;i++)cancel.push(ctx.timers.setInterval(()=>{},60000));});ctx.commands.register({id:'cancel-pending',label:'Cancel pending',target:'server'},()=>{const cancel=ctx.timers.setTimeout(()=>{cancelledEntries++;},0);cancel();});ctx.commands.register({id:'timer-checkpoint',label:'Timer checkpoint',target:'server'},()=>new Promise(resolve=>ctx.timers.setTimeout(()=>resolve(cancelledEntries),0)));ctx.commands.register({id:'clear',label:'Clear',target:'server'},async()=>{await Promise.all(cancel.splice(0).map(f=>f()));});ctx.commands.register({id:'late',label:'Late',target:'server'},()=>{ctx.metadata.watch({},()=>{});return 'returned';});}`,
       });
       const host = (await scope.acquire(() =>
         new PluginHost(
@@ -435,6 +666,11 @@ Deno.test("identity viewer: registration cancellation, cap reuse and full retire
           viewer: f.viewer,
         });
       const generation = host.generation;
+      const watchCount = () =>
+        [...host.registrations.values()].filter((value) =>
+          value.kind === "metadata-watch"
+        ).length;
+      assertEquals(watchCount(), METADATA_LIMITS.watches);
       const retained = createOperationLease("retained", [() => {}]);
       let revoked = false;
       const assertLive = (): undefined => {
@@ -470,9 +706,18 @@ Deno.test("identity viewer: registration cancellation, cap reuse and full retire
         [
           host.available,
           host.generation,
-          [...host.registrations.values()].map((value) => value.id).sort(),
+          watchCount(),
+          [...host.registrations.values()].filter((value) =>
+            value.kind === "command"
+          ).map((value) => value.id).sort(),
         ],
-        [true, generation, ["arm", "cancel-pending", "clear", "late"]],
+        [true, generation, METADATA_LIMITS.watches, [
+          "arm",
+          "cancel-pending",
+          "clear",
+          "late",
+          "timer-checkpoint",
+        ]],
       );
       // Without a viewer, release before admission is ordinary success too.
       assertEquals(await host.invoke(id("cancel-pending"), []), undefined);
@@ -488,6 +733,8 @@ Deno.test("identity viewer: registration cancellation, cap reuse and full retire
       );
       await invoke("arm", [VIEWER_CONTINUATION_LIMIT]);
       assertEquals(host.continuationCount, VIEWER_CONTINUATION_LIMIT);
+      assertEquals(await invoke("cancel-pending"), undefined);
+      assertEquals(await host.invoke(id("timer-checkpoint"), []), 0);
       await assertRejects(
         () => invoke("arm", [1]),
         Error,
@@ -506,6 +753,23 @@ Deno.test("identity viewer: registration cancellation, cap reuse and full retire
       );
       await invoke("arm", [1]);
       assertEquals(host.continuationCount, 1);
+      f.policy("none");
+      assertEquals(f.viewer.sessionCurrent(), true);
+      await waitUntil(
+        () =>
+          host.continuationCount === 0
+            ? done()
+            : pending(host.continuationCount),
+        {
+          label:
+            "live session without vault access releases repeating resources",
+        },
+      );
+      f.policy("view");
+      await host.invoke(id("arm"), [1], false, host.limits.serviceCallMs, {
+        viewer: f.authority.viewer(f.token.principal),
+      });
+      assertEquals(host.continuationCount, 1);
       f.identity.now = f.token.principal.expiresAt;
       await waitUntil(
         () =>
@@ -518,7 +782,9 @@ Deno.test("identity viewer: registration cancellation, cap reuse and full retire
       );
       assert(host.available);
       f.identity.now = f.token.principal.expiresAt - 1000;
-      await invoke("arm", [1]);
+      await host.invoke(id("arm"), [1], false, host.limits.serviceCallMs, {
+        viewer: f.authority.viewer(f.token.principal),
+      });
       assertEquals(host.continuationCount, 1);
       host.stop();
       assertEquals(host.continuationCount, 0);

@@ -162,6 +162,7 @@ const pendingRpc = new Map<
   {
     contextId: string;
     retiring: boolean;
+    filesystem: boolean;
     resolve(value: unknown): void;
     reject(error: Error): void;
   }
@@ -199,6 +200,7 @@ function rpc(
       reject,
       contextId: context.id,
       retiring: method === "context.release",
+      filesystem: method.startsWith("fs."),
     });
     send({
       type: "rpc",
@@ -257,7 +259,9 @@ function register(
   });
 }
 /** Reserve resource custody before host admission or arming any resource. */
-function managed(arm: (context: InvocationReference) => Disposer): Disposer {
+function managed(
+  arm: (context: InvocationReference, current: () => boolean) => Disposer,
+): Disposer {
   const parent = currentWorkerContext();
   const scope = createOwnershipScope();
   const handle = resources.defer(() =>
@@ -270,12 +274,13 @@ function managed(arm: (context: InvocationReference) => Disposer): Disposer {
     scope.retire();
     return resources.release(handle);
   };
+  const current = () => !scope.retired && !stopping;
   const admit = async (context: InvocationReference) => {
     // Cancellation before admission is an ordinary outcome, not a failure of
     // the invocation that created and released the resource.
-    if (scope.retired || stopping) {
+    if (!current()) {
       if (context.kind === "continuation") {
-        await rpc("context.release", [], context);
+        await rpc("context.release", [], context).catch(() => undefined);
       }
       return;
     }
@@ -287,14 +292,17 @@ function managed(arm: (context: InvocationReference) => Disposer): Disposer {
         return rpc("context.release", [], context).catch(() => undefined);
       });
     }
-    await scope.acquire(() => arm(context), (dispose) => dispose());
+    await scope.acquire(() => arm(context, current), (dispose) => dispose());
   };
   if (parent.kind === "background") {
     // Background registrations arm synchronously during activation.
-    scope.defer(arm(parent));
+    scope.defer(arm(parent, current));
   } else {
-    const admission = rpc("context.derive", []).then((value) =>
-      admit(value as InvocationReference)
+    const admission = rpc("context.derive", []).then(
+      (value) => admit(value as InvocationReference),
+      (error) => {
+        if (current()) throw error;
+      },
     ).catch(async (error) => {
       await release();
       throw error;
@@ -313,11 +321,10 @@ function timer(
     throw new Error("timer duration must be non-negative");
   }
   let busy = false;
-  const release = managed((context) => {
+  const release = managed((context, current) => {
     const run = async () => {
-      if (stopping || (context.kind === "continuation" && busy)) return;
+      if (!current() || busy) return;
       if (context.kind === "continuation") busy = true;
-      else if (!interval) await release();
       let firing: InvocationReference | undefined;
       try {
         if (context.kind === "continuation") {
@@ -326,6 +333,7 @@ function timer(
             [],
             context,
           ) as InvocationReference;
+          if (!current()) return;
           await runInvocation(firing, async () => await callback());
         } else await runBackground(async () => await callback());
       } catch {
@@ -346,7 +354,7 @@ function timer(
         if (firing) {
           await rpc("context.release", [], firing).catch(() => undefined);
         }
-        if (!interval && context.kind === "continuation") await release();
+        if (!interval) await release();
         busy = false;
       }
     };
@@ -806,7 +814,11 @@ self.onmessage = async (event: MessageEvent<HostMessage>) => {
       resources.release(resource.handle).catch(() => undefined);
     }
     for (const [id, pending] of pendingRpc) {
-      if (pending.contextId === message.contextId && !pending.retiring) {
+      // The filesystem owner can still report an already-started effect.
+      if (
+        pending.contextId === message.contextId && !pending.retiring &&
+        !pending.filesystem
+      ) {
         pendingRpc.delete(id);
         pending.reject(new Error("continuation retired"));
       }

@@ -190,7 +190,7 @@ lifecycle.onFact((fact, viewer) => {
         action: "operation-error",
       },
       undefined,
-      { viewer, causal: { depth: fact.causalDepth ?? 0 } },
+      { viewer },
     );
     return;
   }
@@ -202,7 +202,7 @@ lifecycle.onFact((fact, viewer) => {
       action: fact.action,
     },
     undefined,
-    { viewer, causal: { depth: fact.causalDepth ?? 0 } },
+    { viewer },
   );
 });
 lifecycle.onSync((fact, viewer) => {

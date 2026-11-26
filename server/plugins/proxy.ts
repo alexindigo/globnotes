@@ -106,6 +106,7 @@ export async function proxyPluginEndpoint(
     body,
   };
   const outcome = await endpoints.invoke(admission, envelope, viewer);
+  viewer?.assertCurrent();
   if (outcome.kind === "unavailable" || outcome.kind === "not-found") {
     // Disabled/unavailable plugins and plain route misses are both 404 —
     // installed files never leak availability.
@@ -119,7 +120,6 @@ export async function proxyPluginEndpoint(
     );
   }
   const { response } = outcome;
-  viewer?.assertCurrent();
   return new Response(
     response.body.length ? response.body as unknown as BodyInit : null,
     { status: response.status, headers: response.headers },

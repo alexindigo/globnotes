@@ -1026,7 +1026,7 @@ export class PluginManager {
         },
         {},
         undefined,
-        { viewer, causal: { depth: snapshot?.causalDepth ?? 0 } },
+        { viewer },
       );
     });
     this.syncBoundary = next;

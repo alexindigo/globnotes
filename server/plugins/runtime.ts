@@ -1163,7 +1163,7 @@ export class PluginRuntime implements Versioning {
     owner?: string,
     target?: {
       generation?: string;
-      causal: { parentId?: string; depth: number };
+      causal?: { parentId?: string; depth: number };
       viewer?: ViewerAuthority;
     },
   ) {

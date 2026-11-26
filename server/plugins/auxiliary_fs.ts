@@ -5,6 +5,7 @@ import * as path from "@std/path";
 import { type StorageEffect, VaultEffects } from "../hub/effects.ts";
 import { HubGate } from "../hub/gate.ts";
 import {
+  AUXILIARY_MUTATIONS,
   FS_LIMITS,
   type FsEffect,
   FsError,
@@ -58,14 +59,7 @@ interface Observation {
   stat: FsStat | null;
   binding: Binding;
 }
-/** Facade methods that change files (the writer registry in
- * tests/hub_gate_contract_test.ts lists each with its condition). */
-export const AUXILIARY_MUTATIONS = [
-  "writeFile",
-  "rename",
-  "remove",
-  "mkdir",
-] as const;
+export { AUXILIARY_MUTATIONS } from "./contracts.ts";
 const mutations = new Set<string>(AUXILIARY_MUTATIONS);
 function inside(root: string, target: string): boolean {
   const relative = path.relative(root, target);
@@ -285,6 +279,7 @@ export class AuxiliaryFilesystem {
     authority: RpcAuthority,
   ): Promise<unknown> {
     const operation = method.slice(3), mutating = mutations.has(operation);
+    authority.reportFsEffect?.("none");
     if (
       !new Set(["stat", "realPath", "readFile", ...mutations]).has(operation)
     ) return Promise.reject(new FsError("fs_denied"));
@@ -305,6 +300,10 @@ export class AuxiliaryFilesystem {
       return Promise.reject(new FsError("fs_generation_revoked"));
     }
     let effect: FsEffect = "none", expired = false;
+    const recordEffect = (outcome: FsEffect) => {
+      effect = outcome;
+      authority.reportFsEffect?.(outcome);
+    };
     const clock = this.adapters.clock ?? processClock;
     const deadline = clock.now() + FS_LIMITS.deadlineMs;
     const stopped = Promise.withResolvers<never>();
@@ -645,9 +644,9 @@ export class AuxiliaryFilesystem {
                   !sameTemporary(Deno.lstatSync(temporary!), temporaryOwner!)
                 ) throw new FsError("fs_conflict");
                 assertCurrent();
-                effect = "unknown";
+                recordEffect("unknown");
                 effects.publish(temporary!, current.binding.canonical);
-                effect = "committed";
+                recordEffect("committed");
               } else if (operation === "rename") {
                 const destination = args[1] as string,
                   currentDestination = observe(destination);
@@ -668,7 +667,7 @@ export class AuxiliaryFilesystem {
                   currentDestination.stat?.kind === "directory"
                 ) throw new FsError("fs_denied");
                 assertCurrent();
-                effect = "unknown";
+                recordEffect("unknown");
                 if (currentDestination.stat) {
                   effects.replaceByMove(
                     current.binding.canonical,
@@ -680,7 +679,7 @@ export class AuxiliaryFilesystem {
                     currentDestination.binding.canonical,
                   );
                 }
-                effect = "committed";
+                recordEffect("committed");
                 return { token: observe(destination).stat!.token };
               } else if (operation === "remove") {
                 condition(current.stat, {
@@ -691,9 +690,9 @@ export class AuxiliaryFilesystem {
                   throw new FsError("fs_denied");
                 }
                 assertCurrent();
-                effect = "unknown";
+                recordEffect("unknown");
                 effects.remove(current.binding.canonical);
-                effect = "committed";
+                recordEffect("committed");
                 return;
               } else {
                 if (configured.expect) {
@@ -728,9 +727,9 @@ export class AuxiliaryFilesystem {
                     const prepared = observe(component);
                     if (prepared.stat) throw new FsError("fs_conflict", effect);
                     assertCurrent();
-                    effect = "unknown";
+                    recordEffect("unknown");
                     effects.mkdir(prepared.binding.canonical);
-                    effect = "committed";
+                    recordEffect("committed");
                     // Account for our own previously absent grant-root components.
                     roots = grants("write");
                   }

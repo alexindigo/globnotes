@@ -28,6 +28,8 @@ import {
   workerPermissions,
 } from "./manifest.ts";
 import {
+  AUXILIARY_MUTATIONS,
+  type FsEffect,
   FsError,
   type HandlerRegistration,
   type HostMessage,
@@ -68,19 +70,16 @@ import {
 
 const HEARTBEAT_MS = 250;
 export const VIEWER_CONTINUATION_LIMIT = 128;
+const fsMutations = new Set<string>(
+  AUXILIARY_MUTATIONS.map((name) => `fs.${name}`),
+);
 function rpcOperation(method: string): VaultOperation {
   if (method === "data.save" || method.startsWith("permissions.")) {
     return "manageVault";
   }
   if (
-    [
-      "actions.request",
-      "files.requestWrite",
-      "fs.writeFile",
-      "fs.rename",
-      "fs.remove",
-      "fs.mkdir",
-    ].includes(method)
+    method === "actions.request" || method === "files.requestWrite" ||
+    fsMutations.has(method)
   ) return "editNotes";
   if (
     [
@@ -109,6 +108,8 @@ const HEARTBEAT_SILENCE_MS = 12 * HEARTBEAT_MS;
 const WORKER_URL = new URL("./worker_entry.ts", import.meta.url);
 export interface RpcAuthority {
   viewer?: ViewerAuthority;
+  /** The filesystem owner reports the effect independently of its reply data. */
+  reportFsEffect?(effect: FsEffect): void;
   retain?(): { current(): boolean; release(): void };
   generation: string;
   role: "render" | "service" | "driver";
@@ -241,6 +242,10 @@ interface Job {
   context?: ExecutionContext;
   invocation?: InvocationOptions;
 }
+interface ViewerSource {
+  authority: ViewerAuthority;
+  refusal?: Error;
+}
 interface Slot {
   worker: Worker;
   generation: string;
@@ -298,6 +303,11 @@ export class PluginHost {
   readonly serviceJobs: ServiceJobs;
   readonly role: "render" | "service" | "driver";
   private readonly registry = new Map<string, HandlerRegistration>();
+  private readonly viewerBindings = new WeakMap<ViewerAuthority, {
+    port: ViewerAuthority;
+    sources: ReadonlySet<ViewerSource>;
+  }>();
+  private readonly viewerRefusals = new WeakSet<Error>();
   get registrations(): ReadonlyMap<string, HandlerRegistration> {
     return new Map(
       [...this.registry].map((
@@ -435,6 +445,72 @@ export class PluginHost {
           .length,
       0,
     );
+  }
+  /** Bind every context to its source viewers. A failed read fence retires
+   * their retained resources, not a generation or an unrelated caller. */
+  private bindViewer(
+    first?: ViewerAuthority,
+    second?: ViewerAuthority,
+  ): ViewerAuthority | undefined {
+    if (!first) return second && this.bindViewer(second);
+    const bound = this.viewerBindings.get(first);
+    if (!second || first === second) {
+      if (bound) return bound.port;
+      const port = this.viewerPort(new Set([{ authority: first }]));
+      this.viewerBindings.set(first, this.viewerBindings.get(port)!);
+      return port;
+    }
+    const left = this.viewerBindings.get(this.bindViewer(first)!)!;
+    const right = this.viewerBindings.get(this.bindViewer(second)!)!;
+    if (left === right) return left.port;
+    return this.viewerPort(new Set([...left.sources, ...right.sources]));
+  }
+  private viewerPort(sources: ReadonlySet<ViewerSource>): ViewerAuthority {
+    const assertCurrent = (operation: VaultOperation = "readVault") => {
+      for (const source of sources) {
+        if (source.refusal) throw source.refusal;
+        try {
+          source.authority.assertCurrent();
+        } catch (error) {
+          const refusal = error instanceof Error
+            ? error
+            : new Error("viewer authority revoked");
+          source.refusal = refusal;
+          this.viewerRefusals.add(refusal);
+          for (const slot of this.slots) {
+            for (const context of slot.contexts.values()) {
+              if (
+                context.retained && context.open && context.viewer &&
+                this.viewerBindings.get(context.viewer)?.sources.has(source)
+              ) this.releaseContext(slot, context, true);
+            }
+          }
+          throw refusal;
+        }
+      }
+      // Loss of Edit/Admin alone must not retire a reader's resources.
+      if (operation !== "readVault") {
+        for (const source of sources) source.authority.assertCurrent(operation);
+      }
+    };
+    const port: ViewerAuthority = Object.freeze({
+      retained: sources.values().next().value!.authority.retained,
+      assertCurrent,
+      operation: (operation?: VaultOperation) => {
+        assertCurrent();
+        return createOperationLease("live", [() => {
+          for (const source of sources) {
+            if (source.refusal) throw source.refusal;
+          }
+          return undefined;
+        }], [...sources].map(({ authority }) => authority.operation(operation)))
+          .lease;
+      },
+      sessionCurrent: () =>
+        [...sources].every(({ authority }) => authority.sessionCurrent()),
+    });
+    this.viewerBindings.set(port, { port, sources });
+    return port;
   }
   private retainContext(
     slot: Slot,
@@ -836,23 +912,6 @@ export class PluginHost {
         }
         if (data.type === "register") {
           try {
-            if (
-              this.role === "render" || this.stopping ||
-              this.registrations.has(data.handlerId)
-            ) throw new Error("invalid handler registration lifetime");
-            if (
-              typeof data.handlerId !== "string" || data.handlerId.length > 128
-            ) throw new Error("invalid handler identity");
-            this.validateRegistration(data.registration);
-            if (
-              data.registration.kind === "job" &&
-              slot.initialization !== "pending"
-            ) throw new Error("job registration is sealed");
-            if (
-              data.registration.kind === "versioning" &&
-              registrationDependencies(data.registration).length &&
-              slot.initialization !== "pending"
-            ) throw new Error("job dependencies are sealed");
             if (typeof data.contextId !== "string") {
               throw new Error("invalid registration context");
             }
@@ -873,10 +932,26 @@ export class PluginHost {
               try {
                 context.viewer?.assertCurrent();
               } catch {
-                this.releaseContext(slot, context, true);
                 return;
               }
             }
+            if (
+              this.role === "render" || this.stopping ||
+              this.registrations.has(data.handlerId)
+            ) throw new Error("invalid handler registration lifetime");
+            if (
+              typeof data.handlerId !== "string" || data.handlerId.length > 128
+            ) throw new Error("invalid handler identity");
+            this.validateRegistration(data.registration);
+            if (
+              data.registration.kind === "job" &&
+              slot.initialization !== "pending"
+            ) throw new Error("job registration is sealed");
+            if (
+              data.registration.kind === "versioning" &&
+              registrationDependencies(data.registration).length &&
+              slot.initialization !== "pending"
+            ) throw new Error("job dependencies are sealed");
             if (context.retained) {
               slot.handlerContexts.set(data.handlerId, context);
             }
@@ -949,20 +1024,21 @@ export class PluginHost {
           else if (slot.activeVersioning?.id === data.id) {
             slot.activeVersioning = null;
           } else slot.active = null;
-          if (data.ok) {
-            try {
-              job.context.viewer?.assertCurrent();
-              job.resolve(data.value);
-            } catch (error) {
-              job.reject(error as Error);
+          try {
+            job.context.viewer?.assertCurrent();
+            if (data.ok) job.resolve(data.value);
+            else {
+              job.reject(
+                new Error(
+                  this.role === "driver"
+                    ? "driver handler failed"
+                    : String(data.value),
+                ),
+              );
             }
-          } else {job.reject(
-              new Error(
-                this.role === "driver"
-                  ? "driver handler failed"
-                  : String(data.value),
-              ),
-            );}
+          } catch (error) {
+            job.reject(error as Error);
+          }
           this.pump();
           return;
         }
@@ -975,6 +1051,7 @@ export class PluginHost {
           return;
         }
         if (data.type === "rpc") {
+          const filesystem = data.method.startsWith("fs.");
           const context = data.contextId === slot.background.reference.id
             ? slot.background
             : slot.contexts.get(data.contextId);
@@ -989,7 +1066,7 @@ export class PluginHost {
                 value = this.retainContext(slot, context).reference;
               } else if (data.method === "context.begin") {
                 if (
-                  !context.retained || !context.viewer?.sessionCurrent() ||
+                  !context.retained || !context.viewer ||
                   [...slot.contexts.values()].some((child) =>
                     child.parentId === context.reference.id
                   )
@@ -1044,7 +1121,7 @@ export class PluginHost {
                 id: data.id,
                 ok: false,
                 value: "plugin invocation context is unavailable or closed",
-                ...(data.method.startsWith("fs.")
+                ...(filesystem
                   ? {
                     error: {
                       status: 409,
@@ -1090,6 +1167,8 @@ export class PluginHost {
           }
           const generation = slot.generation, source = slot.source;
           const sourceBinding = source ? { ...source } : undefined;
+          let effect: FsEffect = "none";
+          let viewerDenied: "read" | "operation" | undefined;
           const current = () => {
             // Source properties may be reentrant. All such inspection precedes
             // the final pure generation/context/destination checks.
@@ -1102,33 +1181,84 @@ export class PluginHost {
               !sourceCurrent || !generationCurrent() || !context.open ||
               slot.generation !== generation || slot.source !== source
             ) return false;
+            if (context.viewer) {
+              try {
+                context.viewer.assertCurrent(rpcOperation(data.method));
+              } catch (error) {
+                viewerDenied = error instanceof Error &&
+                    this.viewerRefusals.has(error)
+                  ? "read"
+                  : "operation";
+                return false;
+              }
+            }
+            return true;
+          };
+          // An in-flight filesystem operation still owes its effect outcome
+          // after context retirement, but can no longer send result data.
+          const transportCurrent = () =>
+            generationCurrent() && (context.open || filesystem) &&
+            slot.generation === generation && slot.source === source;
+          const refusal = () =>
+            filesystem
+              ? new FsError(
+                viewerDenied === "operation" && effect === "none"
+                  ? "fs_denied"
+                  : "fs_generation_revoked",
+                effect,
+              )
+              : new Error("plugin operation denied");
+          const post = worker.postMessage.bind(worker);
+          const acknowledge = () => {
+            const pending = slot.receipts.get(data.id);
+            if (pending) pending.sent = true;
+          };
+          const failureMessage = (error: unknown): HostMessage => ({
+            type: "rpcResponse",
+            generation,
+            id: data.id,
+            ok: false,
+            value: context.viewer
+              ? "plugin operation denied"
+              : error instanceof Error
+              ? error.message
+              : "host service failed",
+            ...(error instanceof PluginContractError
+              ? {
+                error: {
+                  status: error.status,
+                  code: error.code,
+                  ...(error instanceof FsError ? { effect: error.effect } : {}),
+                },
+              }
+              : {}),
+            receiptRequired,
+          });
+          const reportFailure = (error: unknown) => {
+            if (!transportCurrent()) return;
             try {
-              context.viewer?.assertCurrent(rpcOperation(data.method));
-              return true;
+              const permitted = current();
+              if (filesystem) {
+                if (error instanceof FsError) effect = error.effect;
+                if (!permitted || !(error instanceof FsError)) {
+                  error = refusal();
+                }
+              }
+              post(failureMessage(error));
+              acknowledge();
             } catch {
-              return false;
+              if (current()) {
+                this.fail(slot, "plugin RPC response transport failed");
+              }
             }
           };
-          // Failure delivery retains only the transport/context, never private
-          // data. A denied viewer must receive rejection rather than hang.
-          const transportCurrent = () =>
-            generationCurrent() && context.open &&
-            slot.generation === generation && slot.source === source;
           // Issuance itself validates its witnesses. Admission refusal belongs
           // to this RPC too, not an uncaught Worker message-handler exception.
           try {
             const { lease: disclosureLease } = createOperationLease("live", [
               () => {
                 if (!current()) {
-                  throw new Error("plugin generation authority revoked");
-                }
-              },
-            ], context.viewer ? [context.viewer.retained] : []);
-            const post = worker.postMessage.bind(worker);
-            const { lease: failureLease } = createOperationLease("live", [
-              () => {
-                if (!transportCurrent()) {
-                  throw new Error("plugin generation authority revoked");
+                  throw refusal();
                 }
               },
             ]);
@@ -1152,42 +1282,11 @@ export class PluginHost {
                 return undefined;
               },
             );
-            const postFailure = bindPreparedDisclosure(
-              failureLease,
-              "live",
-              (error) =>
-                structuredClone(
-                  {
-                    type: "rpcResponse",
-                    generation,
-                    id: data.id,
-                    ok: false,
-                    value: context.viewer
-                      ? "plugin operation denied"
-                      : error instanceof Error
-                      ? error.message
-                      : "host service failed",
-                    ...(error instanceof PluginContractError
-                      ? {
-                        error: {
-                          status: error.status,
-                          code: error.code,
-                          ...(error instanceof FsError
-                            ? { effect: error.effect }
-                            : {}),
-                        },
-                      }
-                      : {}),
-                    receiptRequired,
-                  } satisfies HostMessage,
-                ),
-              ({ value }) => {
-                post(value);
-                return undefined;
-              },
-            );
             const authority: RpcAuthority = {
               viewer: context.viewer,
+              reportFsEffect: filesystem
+                ? (outcome) => effect = outcome
+                : undefined,
               retain: () => {
                 const child = this.retainContext(slot, context);
                 return {
@@ -1219,30 +1318,9 @@ export class PluginHost {
                 preparedResult = prepared;
               },
             };
-            if (!authority.current()) {
-              worker.postMessage(
-                {
-                  type: "rpcResponse",
-                  generation: slot.generation,
-                  id: data.id,
-                  ok: false,
-                  value: "plugin generation authority revoked",
-                  ...(data.method.startsWith("fs.")
-                    ? {
-                      error: {
-                        status: 409,
-                        code: "fs_generation_revoked",
-                        effect: "none" as const,
-                      },
-                    }
-                    : {}),
-                } satisfies HostMessage,
-              );
-              return;
-            }
             Promise.resolve().then(() => {
               if (!current()) {
-                throw new Error("plugin operation denied");
+                throw refusal();
               }
               if (
                 this.role === "driver" &&
@@ -1250,6 +1328,8 @@ export class PluginHost {
               ) {
                 throw new Error("driver RPC is not available");
               }
+              // The owner can refine this once it enters the actual effect path.
+              if (fsMutations.has(data.method)) effect = "unknown";
               return this.rpc(data.method, data.args, authority);
             }).then(
               (value) => {
@@ -1258,38 +1338,12 @@ export class PluginHost {
                     preparedResult ??
                       prepareDisclosure(disclosureLease, () => value),
                   );
-                  const receipt = slot.receipts.get(data.id);
-                  if (receipt) receipt.sent = true;
+                  acknowledge();
                 }
               },
-            ).catch(
-              (error) => {
-                if (transportCurrent()) {
-                  try {
-                    postFailure(prepareDisclosure(failureLease, () => error));
-                  } catch {
-                    if (current()) {
-                      this.fail(slot, "plugin RPC response transport failed");
-                    }
-                    return;
-                  }
-                  const receipt = slot.receipts.get(data.id);
-                  if (receipt) receipt.sent = true;
-                }
-              },
-            );
-          } catch {
-            if (transportCurrent()) {
-              worker.postMessage(
-                {
-                  type: "rpcResponse",
-                  generation,
-                  id: data.id,
-                  ok: false,
-                  value: "plugin operation denied",
-                } satisfies HostMessage,
-              );
-            }
+            ).catch(reportFailure);
+          } catch (error) {
+            reportFailure(error);
           }
         }
       };
@@ -1787,23 +1841,7 @@ export class PluginHost {
     // because it was admitted while an earlier ordinary job was still running.
     let args: unknown[];
     const owner = slot.handlerContexts.get(job.name);
-    const registered = owner?.viewer, incoming = job.invocation?.viewer;
-    const viewer: ViewerAuthority | undefined = registered && incoming
-      ? {
-        retained: registered.retained,
-        operation: (operation) =>
-          createOperationLease("live", [() => {}], [
-            registered.operation(operation),
-            incoming.operation(operation),
-          ]).lease,
-        assertCurrent: (operation) => {
-          registered.assertCurrent(operation);
-          incoming.assertCurrent(operation);
-        },
-        sessionCurrent: () =>
-          registered.sessionCurrent() && incoming.sessionCurrent(),
-      }
-      : registered ?? incoming;
+    const viewer = this.bindViewer(owner?.viewer, job.invocation?.viewer);
     try {
       if (owner && !owner.open) throw new Error("handler context retired");
       viewer?.assertCurrent();
@@ -1811,6 +1849,9 @@ export class PluginHost {
       // Inspect argument getters/clone before the final viewer fence and post.
       args = structuredClone(args);
       viewer?.assertCurrent();
+      if (job.kind === "invoke" && !this.registrations.has(job.name)) {
+        throw new Error("plugin handler unavailable");
+      }
     } catch (error) {
       job.timer();
       job.reject(
@@ -1874,7 +1915,8 @@ export class PluginHost {
       )
         .then(() => {
           slot.usable = true;
-        }, () => {
+        }, (error) => {
+          if (this.viewerRefusals.has(error)) return;
           slot.usable = false;
           logger.error(`plugin '${this.manifest.id}' onSync failed`);
         })
@@ -2082,9 +2124,10 @@ export class PluginHost {
   private checkHeartbeats() {
     for (const slot of [...this.slots]) {
       for (const context of [...slot.contexts.values()]) {
-        if (
-          context.retained && context.open && !context.viewer?.sessionCurrent()
-        ) this.releaseContext(slot, context, true);
+        if (!context.retained || !context.open) continue;
+        try {
+          context.viewer?.assertCurrent();
+        } catch { /* the viewer owner retired its resources */ }
       }
       if (this.role !== "render" && this.failedDetail) return;
       if (!this.livenessCurrent(slot, slot.startIdentity)) continue;

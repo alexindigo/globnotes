@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { assert } from "@std/assert";
-import type { WorkerMessage } from "../../server/plugins/contracts.ts";
+import type {
+  HostMessage,
+  WorkerMessage,
+} from "../../server/plugins/contracts.ts";
 import { done, pending, waitUntil } from "./wait.ts";
 
 export async function bounded<T>(
@@ -46,6 +49,8 @@ export class WorkerDeliveryGate {
   readonly heartbeat = Promise.withResolvers<void>();
   holdHeartbeat = true;
   holdReady = false;
+  holdInbound?: (message: WorkerMessage, deliver: () => void) => boolean;
+  holdOutbound?: (message: HostMessage, deliver: () => void) => boolean;
   constructor() {
     globalThis.Worker = new Proxy(this.native, {
       construct: (target, args, newTarget) => {
@@ -67,6 +72,11 @@ export class WorkerDeliveryGate {
           item.terminated++;
           terminate();
         };
+        const postMessage = worker.postMessage.bind(worker);
+        worker.postMessage = (message: HostMessage) => {
+          const deliver = () => postMessage(message);
+          if (!this.holdOutbound?.(message, deliver)) deliver();
+        };
         Object.defineProperty(worker, "onmessage", {
           configurable: true,
           get: () => handler,
@@ -78,6 +88,9 @@ export class WorkerDeliveryGate {
           "message",
           (event: MessageEvent<WorkerMessage>) => {
             item.received.push(event.data);
+            if (this.holdInbound?.(event.data, () => item.deliver(event))) {
+              return;
+            }
             if (event.data.type === "heartbeat") {
               item.heartbeatEvent = event;
               if (this.holdHeartbeat) item.held.push(event);

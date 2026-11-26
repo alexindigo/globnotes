@@ -43,6 +43,13 @@ export type FsStat = {
   token: FsToken;
 };
 export type FsEffect = "none" | "committed" | "unknown";
+/** Facade methods that can change files. */
+export const AUXILIARY_MUTATIONS = [
+  "writeFile",
+  "rename",
+  "remove",
+  "mkdir",
+] as const;
 export interface AuxiliaryFs {
   stat(path: string, options?: FsOptions): Promise<FsStat | null>;
   realPath(
