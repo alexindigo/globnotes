@@ -116,6 +116,45 @@ Deno.test("identity projections: View config and catalog are allowlisted reader 
     );
   }));
 
+for (const level of ["view", "admin"] as const) {
+  Deno.test(`identity projections: ${level} catalog uses its reported policy revision`, () =>
+    withIdentityComposition(async (f) => {
+      f.policy(level);
+      const { policy } = f.operations.manager;
+      const read = policy.read.bind(policy);
+      const before = await read();
+      let replaced = false;
+      policy.read = async () => {
+        const snapshot = await read();
+        if (!replaced) {
+          // Commit after capture but before the catalog derives its entries.
+          replaced = true;
+          await policy.setEnabled("projection", false, snapshot.metadata);
+        }
+        return snapshot;
+      };
+      const catalog = async () => {
+        const { policy, plugins } = await json(
+          f.composition.responses.catalog(f.request()),
+        );
+        return [
+          policy.revision,
+          plugins.map(({ id, enabled }: { id: string; enabled: boolean }) => [
+            id,
+            enabled,
+          ]),
+        ];
+      };
+      assertEquals([await catalog(), await catalog()], [
+        [before.metadata.revision, [["projection", true]]],
+        [
+          before.metadata.revision + 1,
+          level === "view" ? [] : [["projection", false]],
+        ],
+      ]);
+    }));
+}
+
 Deno.test("identity projections: explicit None keeps own-account status but no vault metadata or catalog", () =>
   withIdentityComposition(async (f) => {
     f.policy("none");
@@ -173,8 +212,9 @@ Deno.test("identity projections: None response needs no vault lease but ends wit
     );
     const outcomes = [];
     for (const response of [pending, retired]) {
+      const reader = response.body!.getReader();
       const error = await assertRejects(
-        () => response.text(),
+        () => reader.read(),
         HttpError,
         "HTTP 401",
       );
@@ -192,16 +232,18 @@ Deno.test("identity projections: reader response is fenced by demotion and compo
     const demoted = await f.composition.responses.config(f.request());
     const retired = await f.composition.responses.status(f.request());
     f.policy("none");
+    const demotedReader = demoted.body!.getReader();
     const error = await assertRejects(
-      () => demoted.text(),
+      () => demotedReader.read(),
       OperationError,
       "Access policy changed while this operation was pending; it was not applied.",
     );
     assertEquals(error.status, 409);
     f.policy("view");
     f.lifetime.retire();
+    const retiredReader = retired.body!.getReader();
     await assertRejects(
-      () => retired.text(),
+      () => retiredReader.read(),
       OwnershipError,
       "Owner is retired",
     );

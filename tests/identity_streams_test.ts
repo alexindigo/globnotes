@@ -126,15 +126,13 @@ for (const surface of ["plugins", "vault"] as const) {
       );
       f.policy("none");
       await bounded(probe.idle(), `${surface} demotion listener release`);
-      const consumed: string[] = [];
+      const reader = response.body!.getReader();
       const error = await assertRejects(
-        async () => {
-          consumed.push(await response.text());
-        },
+        () => reader.read(),
         OperationError,
         CHANGED,
       );
-      assertEquals([error.status, consumed], [409, []]);
+      assertEquals(error.status, 409);
       assertEquals(f.operations.runtime.status("projection")?.status, "ready");
     }));
 
@@ -159,8 +157,9 @@ for (const surface of ["plugins", "vault"] as const) {
         pathfinderRequest(f.request()),
       );
       f.lifetime.retire();
+      const reader = response.body!.getReader();
       await assertRejects(
-        () => response.text(),
+        () => reader.read(),
         OwnershipError,
         "Owner is retired",
       );

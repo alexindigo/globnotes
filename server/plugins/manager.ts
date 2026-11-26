@@ -218,9 +218,7 @@ export class PluginManager {
   }
 
   /** Invalid overrides remain visible failures; they never select an older implementation. */
-  private inventory(
-    policy: PluginPolicy = this.policy.selection().policy,
-  ): readonly InstalledPlugin[] {
+  private inventory(policy: PluginPolicy): readonly InstalledPlugin[] {
     const entries = new Map(
       this.installed.refresh().map((entry) => [entry.id, entry]),
     );
@@ -233,8 +231,18 @@ export class PluginManager {
       ...[...entries.values()].filter((entry) => !ordered.has(entry.id)),
     ];
   }
+  private policyInventory(
+    { policy, automatic }: ReturnType<PluginPolicyStore["selection"]>,
+  ) {
+    return this.inventory(policy).map((entry) => ({
+      ...entry,
+      enabled: policyEnables(policy, entry.id, automatic),
+    }));
+  }
   private networkPlugins(): NetworkPlugin[] {
-    return this.inventory().map((entry) => this.networkPlugin(entry));
+    return this.inventory(this.policy.selection().policy).map((entry) =>
+      this.networkPlugin(entry)
+    );
   }
   private networkPlugin(entry: InstalledPlugin): NetworkPlugin {
     return {
@@ -249,7 +257,7 @@ export class PluginManager {
   }
   /** Startup preflight seam; no workers, approvals or saved settings are created. */
   validateConfiguration(): void {
-    this.inventory();
+    this.inventory(this.policy.selection().policy);
   }
   private enabled(id: string): boolean {
     const { policy, automatic } = this.policy.selection();
@@ -307,16 +315,31 @@ export class PluginManager {
     }
   }
 
+  /** Both catalog projections derive order and enablement from the policy
+   * observation that supplied their reported revision. */
+  private async catalogSnapshot() {
+    const { policy, metadata } = await this.policy.read();
+    return {
+      metadata,
+      plugins: this.policyInventory({
+        policy,
+        automatic: metadata.effectiveAutoEnable,
+      }),
+    };
+  }
+
   /** Authoritative inventory includes disabled/failed plugins and only public metadata. */
   async catalog() {
-    const { policy, metadata } = await this.policy.read();
+    const { metadata, plugins } = await this.catalogSnapshot();
     return {
       contractVersion: PLUGIN_CONTRACT_VERSION,
       changesApiVersion: CHANGES_API_VERSION,
       policy: metadata,
       plugins: await Promise.all(
-        this.inventory(policy).map(
-          async ({ id, manifest, diagnostic, hooks: declaredHooks }) => {
+        plugins.map(
+          async (
+            { id, manifest, enabled, diagnostic, hooks: declaredHooks },
+          ) => {
             let permissions: PermissionView | null = null;
             let permissionDiagnostic: PluginDiagnostic | undefined;
             try {
@@ -331,11 +354,6 @@ export class PluginManager {
                   : "server permissions unavailable",
               };
             }
-            const enabled = policyEnables(
-              policy,
-              id,
-              metadata.effectiveAutoEnable,
-            );
             const runtime = this.serviceRuntime?.status(id);
             const render = this.renderOwners.get(id);
             const status: PluginStatus = !enabled
@@ -430,12 +448,12 @@ export class PluginManager {
   /** Reader contribution catalog, built from enabled descriptors rather than by
    * subtracting fields from the administrative inventory above. */
   async readerCatalog() {
-    const { metadata } = await this.policy.read();
+    const { metadata, plugins } = await this.catalogSnapshot();
     return {
       contractVersion: PLUGIN_CONTRACT_VERSION,
       changesApiVersion: CHANGES_API_VERSION,
       policy: { revision: metadata.revision },
-      plugins: this.orderedManifests().map((manifest) => ({
+      plugins: this.enabledDescriptors(plugins).map((manifest) => ({
         id: manifest.id,
         name: manifest.name,
         version: manifest.version,
@@ -518,14 +536,11 @@ export class PluginManager {
     this.networkCommit = (effect) => adapters.commit(effect);
     this.inventoryChanged = (domain) => adapters.changed?.(domain);
     this.serviceRuntime = new PluginRuntime(
-      () => {
-        const { policy, automatic } = this.policy.selection();
-        return this.inventory(policy).map((entry) => ({
+      () =>
+        this.policyInventory(this.policy.selection()).map((entry) => ({
           ...entry,
-          enabled: policyEnables(policy, entry.id, automatic),
           hooks: entry.manifest?.hooks ?? entry.hooks ?? [],
-        }));
-      },
+        })),
       {
         ...adapters,
         network: this.network,
@@ -559,10 +574,16 @@ export class PluginManager {
     };
   }
   private orderedManifests(): PluginManifest[] {
-    const { policy, automatic } = this.policy.selection();
-    return this.inventory(policy).filter((entry) =>
-      policyEnables(policy, entry.id, automatic)
-    ).flatMap((entry) => entry.manifest ? [entry.manifest] : []);
+    return this.enabledDescriptors(
+      this.policyInventory(this.policy.selection()),
+    );
+  }
+  private enabledDescriptors(
+    plugins: readonly (InstalledPlugin & { enabled: boolean })[],
+  ): PluginManifest[] {
+    return plugins.flatMap(({ enabled, manifest }) =>
+      enabled && manifest ? [manifest] : []
+    );
   }
   ensureStarted(): Promise<void> {
     this.renderRequested = true;
@@ -843,7 +864,7 @@ export class PluginManager {
   /** Called after committed policy; synchronous retirement precedes all awaits. */
   async reconcileOwners(options: { replaceId?: string } = {}): Promise<void> {
     this.retireUndesiredOwners();
-    for (const source of this.inventory()) {
+    for (const source of this.inventory(this.policy.selection().policy)) {
       if (
         this.enabled(source.id) && this.seenEnabled.get(source.id) === false
       ) {
