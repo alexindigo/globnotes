@@ -244,6 +244,7 @@ export class InstanceAuthority {
   #bindViewer(
     principal: Principal,
     vault: AuthorityVault | null,
+    writeAdmission?: OperationLease<"live">,
   ): ViewerAuthority {
     const { lease: retained } = createOperationLease("retained", [
       (_id, native) =>
@@ -261,8 +262,13 @@ export class InstanceAuthority {
     if (!this.capabilities(principal, vault).canRead) forbidden();
     const operation = (required: VaultOperation = "readVault") => {
       assertOperationLease(retained, "retained");
+      // Reads can follow live grants on the same vault. Effects must still
+      // satisfy the exact revision, epoch and policy that admitted the request.
+      const admission = required !== "readVault" ? writeAdmission : undefined;
+      admission?.assertCurrent();
       return createOperationLease("live", [() => {}], [
         retained,
+        ...(admission ? [admission] : []),
         this.#prepareLease(required, vault ?? changed())(principal).lease,
       ]).lease;
     };
@@ -368,9 +374,7 @@ export class InstanceAuthority {
         (id, native) =>
           withAuthorityContext(native, (context) => guard(context, id)),
       ], [lifetime]);
-      // Retained viewer operations may see fresh ACLs, but can never select a
-      // different vault from the live lease which admitted the caller.
-      const viewer = this.#bindViewer(principal, vault);
+      const viewer = this.#bindViewer(principal, vault, lease);
       const assertCurrent = lease.assertCurrent;
       assertCurrent();
       return Object.freeze({

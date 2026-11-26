@@ -1,29 +1,22 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 export const operation = "readVault";
 
-import { renderMarkdown } from "@server/render/pipeline.ts";
 import type { PathfinderRequest } from "@pathfinder/pathfinder";
+import type { ViewerAuthority } from "@server/auth/authority.ts";
 import type { createInstanceAuth } from "@server/auth/middleware.ts";
 import { createHttpPolicy } from "@server/auth/http_policy.ts";
+import { renderResponse } from "@server/render/response.ts";
 
 export function createIdentityRender(
   auth: ReturnType<typeof createInstanceAuth>,
 ) {
   const policy = createHttpPolicy(auth);
   return async (request: PathfinderRequest) => {
-    return await policy.read(request._raw, "readVault", async ({ viewer }) => {
-      const content = await request.body.text();
-      const html = await renderMarkdown(content, {
-        viewer,
-        disabled: (request.query.get("disabled") ?? "").split(",").filter(
-          Boolean,
-        ),
-        lineNumbers: request.query.get("lineNumbers") === "true",
-      });
-      return new Response(html, {
-        headers: { "content-type": "text/html; charset=utf-8" },
-      });
-    });
+    return await policy.read(
+      request._raw,
+      "readVault",
+      ({ viewer }) => renderBuffer(request, viewer),
+    );
   };
 }
 
@@ -33,17 +26,13 @@ export function createIdentityRender(
  * not the stored note. Body = raw markdown (text/markdown). Query flags
  * match the GET path: `disabled` (comma-separated plugin ids, from the
  * client's localStorage plugin switches) and `lineNumbers=true`. */
-export default async function (request: PathfinderRequest): Promise<Response> {
-  const content = await request.body.text();
-  const disabled = (request.query.get("disabled") ?? "")
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-  const html = await renderMarkdown(content, {
-    disabled,
-    lineNumbers: request.query.get("lineNumbers") === "true",
-  });
-  return new Response(html, {
-    headers: { "content-type": "text/html; charset=utf-8" },
-  });
+export default function (request: PathfinderRequest): Promise<Response> {
+  return renderBuffer(request);
+}
+
+async function renderBuffer(
+  request: PathfinderRequest,
+  viewer?: ViewerAuthority,
+) {
+  return await renderResponse(await request.body.text(), request.query, viewer);
 }

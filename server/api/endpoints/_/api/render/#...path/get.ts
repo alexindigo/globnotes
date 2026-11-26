@@ -4,7 +4,7 @@ export const operation = "readVault";
 import { note_not_found } from "@server/api_messages.ts";
 import { InvalidPathError, NoteNotFoundError } from "@server/notes/models.ts";
 import { HttpError, type PathfinderRequest } from "@pathfinder/pathfinder";
-import { renderMarkdown } from "@server/render/pipeline.ts";
+import { renderResponse } from "@server/render/response.ts";
 import { state } from "@server/state.ts";
 import type { ViewerAuthority } from "@server/auth/authority.ts";
 import type { createInstanceAuth } from "@server/auth/middleware.ts";
@@ -42,15 +42,5 @@ async function renderNote(
     }
     throw e;
   }
-  const html = await renderMarkdown(content, {
-    viewer,
-    disabled: (request.query.get("disabled") ?? "")
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean),
-    lineNumbers: (request.query.get("lineNumbers") ?? "") === "true",
-  });
-  return new Response(html, {
-    headers: { "content-type": "text/html; charset=utf-8" },
-  });
+  return await renderResponse(content, request.query, viewer);
 }

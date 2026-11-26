@@ -615,12 +615,15 @@ not a durable receipt, rollback, exactly-once delivery or backup guarantee.
 Preparatory identity callers retain a host-only viewer bound to the admitted vault
 through render, command, endpoint, hook and action work. Managed registrations are admitted
 before arming and keep that viewer after normal handler return. Every mediated
-effect and disclosure checks fresh live authority, intersected with plugin grants,
-source and generation. Workers receive correlation IDs, never leases or identity.
+effect and disclosure checks live authority, intersected with plugin grants,
+source and generation. Viewer-triggered writes also require the ACL revision and
+policy that admitted the request. Workers receive correlation IDs, never leases
+or identity.
 Edit permits note/file effects, not private plugin-data or permission writes.
 The old production identity adapter remains active until coordinated cutover.
 
-At most 128 live derived viewer scopes exist per generation. Overflow refuses the
+At most 128 retained continuation scopes exist per generation, regardless of
+which restrictions the parent carries. Overflow refuses the
 registration and its originating invocation; it never substitutes background
 work. A registration arriving after its scope retired is refused without failing
 the generation. One-shots release after callback settlement or cancellation;

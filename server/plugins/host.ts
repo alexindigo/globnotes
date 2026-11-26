@@ -69,7 +69,7 @@ import {
 } from "./network_contracts.ts";
 
 const HEARTBEAT_MS = 250;
-export const VIEWER_CONTINUATION_LIMIT = 128;
+export const RETAINED_CONTINUATION_LIMIT = 128;
 const fsMutations = new Set<string>(
   AUXILIARY_MUTATIONS.map((name) => `fs.${name}`),
 );
@@ -440,12 +440,13 @@ export class PluginHost {
   /** Host-only bounded ownership observation, not an SDK capability. */
   get continuationCount(): number {
     return this.slots.reduce(
-      (count, slot) =>
-        count +
-        [...slot.contexts.values()].filter((context) => context.retained)
-          .length,
+      (count, slot) => count + this.retainedCount(slot),
       0,
     );
+  }
+  private retainedCount(slot: Slot): number {
+    return [...slot.contexts.values()].filter((context) => context.retained)
+      .length;
   }
   /** Bind every context to its source viewers. A failed read fence retires
    * their retained resources, not a generation or an unrelated caller. */
@@ -526,13 +527,9 @@ export class PluginHost {
       return slot.background;
     }
     viewer?.assertCurrent();
-    if (
-      viewer &&
-      [...slot.contexts.values()].filter((context) =>
-          context.retained && context.provenance.viewer
-        )
-          .length >= VIEWER_CONTINUATION_LIMIT
-    ) throw new Error("viewer continuation capacity exhausted");
+    if (this.retainedCount(slot) >= RETAINED_CONTINUATION_LIMIT) {
+      throw new Error("continuation capacity exhausted");
+    }
     const child = executionContext("continuation", parent.provenance);
     child.retained = true;
     this.ownContext(slot, parent, child, true);

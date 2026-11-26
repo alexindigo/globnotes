@@ -6,7 +6,7 @@ import type { AuthorityReadContext } from "../server/auth/authority_context.ts";
 import { createInstanceAuth } from "../server/auth/middleware.ts";
 import {
   PluginHost,
-  VIEWER_CONTINUATION_LIMIT,
+  RETAINED_CONTINUATION_LIMIT,
 } from "../server/plugins/host.ts";
 import { readManifest } from "../server/plugins/manifest.ts";
 import { PluginEndpoints } from "../server/plugins/endpoints.ts";
@@ -23,11 +23,16 @@ import { done, pending, waitUntil } from "./helpers/wait.ts";
 import { hostInitialized } from "./helpers/product_settlement.ts";
 import { state } from "../server/state.ts";
 import { createIdentityNoteRender } from "../server/api/endpoints/_/api/render/%23...path/get.ts";
-import { createIdentityRender } from "../server/api/endpoints/_/api/render/post.ts";
-import { createIdentityPluginCommand } from "../server/api/endpoints/_/api/plugin-host/%23id/commands/%23command/post.ts";
+import legacyRender, {
+  createIdentityRender,
+} from "../server/api/endpoints/_/api/render/post.ts";
+import legacyCommand, {
+  createIdentityPluginCommand,
+} from "../server/api/endpoints/_/api/plugin-host/%23id/commands/%23command/post.ts";
 import { OperationError } from "../server/plugins/errors.ts";
 import { METADATA_LIMITS } from "../server/metadata/contracts.ts";
 import { WorkerDeliveryGate } from "./helpers/worker_liveness.ts";
+import { createPluginManager } from "./helpers/plugin_manager.ts";
 
 const source =
   `let status=Promise.withResolvers(), fsOutcome, endpointVisits=0, observedCause=Promise.withResolvers();export function enteredEndpoint(){endpointVisits++;}export function activate(ctx){
@@ -36,6 +41,7 @@ const source =
   ctx.hooks.on('on-sync',fact=>{if(fact.operationId==='source-sync')return follow('sync');});
   ctx.commands.register({id:'causal-result',label:'Causal result',target:'server'},()=>observedCause.promise);
   ctx.commands.register({id:'echo',label:'Echo',target:'server'},payload=>payload);
+  ctx.commands.register({id:'fail',label:'Fail',target:'server'},()=>{throw new Error('deliberate failure');});
   ctx.commands.register({id:'endpoint-visits',label:'Endpoint visits',target:'server'},()=>endpointVisits);
   ctx.commands.register({id:'timer',label:'Timer',target:'server'},()=>{
     status=Promise.withResolvers();ctx.timers.setTimeout(async()=>{try{await ctx.readNote('gate');
@@ -135,9 +141,9 @@ async function withViewer(run: (f: ViewerFixture) => Promise<void>) {
         holdWrite: (value) => {
           writeHold = value;
         },
-        policy: (level) =>
+        policy: (level, everybody = "none") =>
           acl.save(
-            { everybody: "none", grants: { [ACCOUNT_A]: level } },
+            { everybody, grants: { [ACCOUNT_A]: level } },
             acl.capture(),
             { updateId: UPDATE, actorId: ACCOUNT_A },
           ),
@@ -163,7 +169,10 @@ type ViewerFixture = PluginFixture & {
   replace(): void;
   hold(value: () => Promise<void>): void;
   holdWrite(value: () => Promise<void>): void;
-  policy(level: "view" | "edit" | "admin" | "none"): unknown;
+  policy(
+    level: "view" | "edit" | "admin" | "none",
+    everybody?: "none" | "view",
+  ): unknown;
   commandAsViewer(command: string): Promise<unknown>;
 };
 function absent(filename: string): boolean {
@@ -175,6 +184,151 @@ function absent(filename: string): boolean {
     throw error;
   }
 }
+
+Deno.test("identity viewer: command parsing and outcomes match the legacy route", () =>
+  withViewer(async (f) => {
+    const raw = new Request("http://fixture/command", {
+      method: "POST",
+      headers: { authorization: `Bearer ${f.token.access_token}` },
+    });
+    for (
+      const handler of [
+        legacyCommand,
+        createIdentityPluginCommand(f.auth, f.runtime),
+      ]
+    ) {
+      let bodyReads = 0;
+      const request = (id: string, command: string, json?: unknown) =>
+        ({
+          _raw: raw,
+          params: { id, command },
+          body: {
+            json: async () => {
+              bodyReads++;
+              return await new Request(raw.url, {
+                method: "POST",
+                body: json === undefined ? null : JSON.stringify(json),
+              }).json();
+            },
+          },
+        }) as unknown as PathfinderRequest;
+      const missing = await assertRejects(
+        () => handler(request("not-installed", "echo")),
+        HttpError,
+        "HTTP 404",
+      );
+      assertEquals([missing.status, bodyReads], [404, 0]);
+      for (const payload of [undefined, null, [1, "ok"]]) {
+        const response = await handler(request(f.id, "echo", payload));
+        assertEquals([response.status, await response.json()], [200, {
+          result: payload === undefined ? {} : payload,
+        }]);
+      }
+      const unknown = await assertRejects(
+        () => handler(request(f.id, "not-registered")),
+        HttpError,
+        "HTTP 404",
+      );
+      const failed = await assertRejects(
+        () => handler(request(f.id, "fail")),
+        HttpError,
+        "HTTP 500",
+      );
+      assertEquals([unknown.status, failed.status], [404, 500]);
+    }
+  }));
+
+Deno.test("identity viewer: render POST skips the same whitespace-padded IDs as the legacy route", () =>
+  withViewer(async (f) => {
+    const dir = await f.fixture.install("probe", {}, {
+      "main.js":
+        `export function getSelectors(){return [{node:'fence',language:'probe'}]};export function parseNode(){return {parts:['<b>rendered by probe</b>']}};`,
+    });
+    const prior = state.plugins;
+    const manager = (await f.scope.acquire(() =>
+      createPluginManager(f.fixture.vault, undefined, 1, f.fixture.statePath, {
+        internalRoot: `${dir}/no-internal`,
+        autoEnable: true,
+      }), (manager) =>
+      manager.stop())).value;
+    f.scope.defer(() => {
+      state.plugins = prior;
+    });
+    state.plugins = manager;
+    const raw = new Request("http://fixture/render", {
+      method: "POST",
+      headers: { authorization: `Bearer ${f.token.access_token}` },
+    });
+    for (const handler of [legacyRender, createIdentityRender(f.auth)]) {
+      const render = async (query: string) =>
+        await (await handler({
+          _raw: raw,
+          query: new URLSearchParams(query),
+          body: {
+            text: () =>
+              Promise.resolve("```probe\noriginal\n```\n"),
+          },
+        } as unknown as PathfinderRequest)).text();
+      assert((await render("")).includes("<b>rendered by probe</b>"));
+      const disabled = await render("disabled=alpha,%20probe%20,%20");
+      assertEquals([
+        disabled.includes("rendered by probe"),
+        disabled.includes("original"),
+      ], [false, true]);
+    }
+  }));
+
+Deno.test("identity viewer: a newer ACL revision with the same grant does not authorize stale command effects", () =>
+  withViewer(async (f) => {
+    f.policy("edit");
+    const filename = `${f.fixture.vault}/acl-revision.bin`;
+    const raw = new Request("http://fixture/command", {
+      method: "POST",
+      headers: { authorization: `Bearer ${f.token.access_token}` },
+    });
+    const admitted = await f.auth.readLease(raw);
+    const invoke = createIdentityPluginCommand(f.auth, f.runtime);
+    await heldOperation({
+      label: "ACL changes before command body completes",
+      owner: () => f.runtime,
+      progress: { kind: "controlled", clock: "external" },
+      signal: f.scope.signal,
+    }, (hold) =>
+      invoke({
+        _raw: raw,
+        params: { id: f.id, command: "fs-write" },
+        body: {
+          json: async () => {
+            await hold();
+            return "acl-revision.bin";
+          },
+        },
+      } as unknown as PathfinderRequest), async (operation) => {
+      await operation.reached();
+      admitted.assertCurrent();
+      // Change the ACL contents as well as its revision without changing Alice's grant.
+      f.policy("edit", "view");
+      const fresh = await f.auth.readLease(raw);
+      assertEquals(fresh.aclRevision, admitted.aclRevision + 1);
+      fresh.viewer.assertCurrent("editNotes");
+      await assertRejects(
+        operation.result,
+        OperationError,
+        "Access policy changed",
+      );
+      assertEquals(absent(filename), true);
+      // Without HTTP response checks, a retained viewer still cannot accept or
+      // start a deferred write; only the effect owner can enforce this.
+      const before = f.actions.retentionCounts();
+      await assertRejects(
+        () => f.runtime.invokeCommand(f.id, "direct", {}, admitted.viewer),
+        Error,
+        "plugin handler failed",
+      );
+      assertEquals(f.actions.retentionCounts(), before);
+      assertEquals(absent(`${f.fixture.vault}/direct-output.md`), true);
+    });
+  }));
 
 for (const action of ["create", "sync"] as const) {
   Deno.test(`identity viewer: ${action} observer retains its source operation parent`, () =>
@@ -808,8 +962,12 @@ Deno.test("identity viewer: registration cancellation, cap reuse and full retire
           label: "cancelled admission releases child",
         },
       );
-      await invoke("arm", [VIEWER_CONTINUATION_LIMIT]);
-      assertEquals(host.continuationCount, VIEWER_CONTINUATION_LIMIT);
+      await invoke("arm", [RETAINED_CONTINUATION_LIMIT - 2]);
+      await host.invoke(id("arm"), [1], true);
+      await host.invoke(id("arm"), [1], false, host.limits.serviceCallMs, {
+        causal: { parentId: "source-observer", depth: 1 },
+      });
+      assertEquals(host.continuationCount, RETAINED_CONTINUATION_LIMIT);
       assertEquals(await invoke("cancel-pending"), undefined);
       assertEquals(await host.invoke(id("timer-checkpoint"), []), 0);
       await assertRejects(
@@ -817,7 +975,20 @@ Deno.test("identity viewer: registration cancellation, cap reuse and full retire
         Error,
         "plugin handler failed",
       );
-      assertEquals(host.continuationCount, VIEWER_CONTINUATION_LIMIT);
+      await assertRejects(
+        () => host.invoke(id("arm"), [1], true),
+        Error,
+        "plugin handler failed",
+      );
+      await assertRejects(
+        () =>
+          host.invoke(id("arm"), [1], false, host.limits.serviceCallMs, {
+            causal: { parentId: "source-observer", depth: 1 },
+          }),
+        Error,
+        "plugin handler failed",
+      );
+      assertEquals(host.continuationCount, RETAINED_CONTINUATION_LIMIT);
       await host.invoke(id("clear"), []);
       await waitUntil(
         () =>

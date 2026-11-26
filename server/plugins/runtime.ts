@@ -41,6 +41,7 @@ import {
 import { permissionFingerprint } from "./network_permissions.ts";
 import type { ViewerAuthority } from "../auth/authority.ts";
 import type { PluginSettingsEnvironment } from "./settings_environment.ts";
+import { PluginCommandNotFound } from "./errors.ts";
 import {
   type DiscoverRequest,
   type DiscoveryPage,
@@ -886,9 +887,11 @@ export class PluginRuntime implements Versioning {
     const entry = this.entries.get(id);
     if (
       !entry || !entry.source.enabled || entry.status !== "ready" || !entry.host
-    ) throw new Error("plugin command unavailable");
+    ) throw new PluginCommandNotFound("plugin command unavailable");
     const handler = this.handlerIds(entry, "command", command)[0];
-    if (!handler) throw new Error("plugin command is not registered");
+    if (!handler) {
+      throw new PluginCommandNotFound("plugin command is not registered");
+    }
     return await entry.host.invoke(
       handler,
       [payload],

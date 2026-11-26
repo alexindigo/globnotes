@@ -3,6 +3,15 @@
 /** Structured operation failures. Pathfinder's HttpError serializes {detail}
  * only, so guarded outcomes cross as a real JSON Response instead. */
 
+export class PluginCommandNotFound extends Error {
+  constructor(
+    message: "plugin command unavailable" | "plugin command is not registered",
+  ) {
+    super(message);
+    this.name = "PluginCommandNotFound";
+  }
+}
+
 export type OperationErrorCode =
   | "plugin_cancelled"
   | "plugin_guard_failed"
