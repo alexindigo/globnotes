@@ -20,6 +20,8 @@
     <SettingsActions v-if="state.dirty && state.mutable"><template #start><CustomButton size="settings" type="button" variant="secondary" label="Discard changes" @click="controller.discard" /></template><CustomButton v-if="state.canSave" size="settings" type="button" variant="cta" label="Save access" @click="controller.requestCommit" /></SettingsActions>
     <section v-if="state.view?.declaredAdmin?.pinned" class="access-explanation"><h3 class="font-semibold">Why {{ state.view.declaredAdmin.login }} is always an Admin</h3><p>The server's configuration, for example its Docker settings, makes {{ state.view.declaredAdmin.login }} an Admin of this vault so the owner cannot be locked out of the vault.</p><p>To change or remove this Admin access, change the server's configuration, not this app.</p><p>Changing other people's access here does not remove {{ state.view.declaredAdmin.login }}'s Admin access.</p></section>
     <p v-if="state.error && !state.dialog" role="alert" class="text-theme-danger">{{ state.error }}</p><CustomButton v-if="state.canReview && !state.dialog" type="button" variant="secondary" label="Review current access" @click="controller.review" />
+    <CustomButton v-if="state.canCheckCreation && !state.dialog" type="button" variant="secondary" label="Check account creation" @click="controller.reviewCreation" />
+    <p v-if="state.checkingCreation" role="status">Checking account creation...</p>
     <IdentityDialog :open="!!state.dialog" :title="state.dialogTitle" :cancel="controller.cancelDialog">
       <form class="flex min-w-0 flex-col gap-6" @submit.prevent="controller.submitDialog">
         <p>{{ state.dialog === 'create' ? 'Create an account with access to this vault in one step.' : 'Add someone who already has an account on this server.' }}</p>
@@ -30,7 +32,7 @@
         <p v-else>Their password and authenticator stay unchanged.</p>
         <p v-if="state.error" role="alert" class="text-theme-danger">{{ state.error }}</p>
         <SettingsActions v-if="!state.busy && !state.provisioningUnknown"><CustomButton size="settings" type="button" variant="secondary" label="Cancel" @click="controller.cancelDialog" /><CustomButton v-if="state.canReview" size="settings" type="button" variant="secondary" label="Review current access" @click="controller.review" /><CustomButton v-else-if="state.mutable" size="settings" type="submit" variant="cta" :label="state.dialog === 'create' ? 'Create and add' : 'Add account'" /></SettingsActions>
-        <CustomButton v-if="state.provisioningUnknown && !state.busy" type="button" variant="secondary" label="Check account creation" @click="controller.reviewCreation" />
+        <CustomButton v-if="state.canCheckCreation" type="button" variant="secondary" label="Check account creation" @click="controller.reviewCreation" />
         <p v-if="state.busy" role="status">Adding account...</p>
       </form>
     </IdentityDialog>

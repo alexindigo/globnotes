@@ -71,19 +71,23 @@ export function createIdentityAccessSettingsState({ read = getIdentityAccess, wr
       you: id === form.account?.id, canEdit: editableRows.value && id !== declared?.accountId }));
   });
   const canReview = computed(() => original() && (unknown.value || fields.needsReview) && !pending.value && !reviewing.value && !fields.loading);
+  const canCheckCreation = computed(() => original() && provisioningUnknown.value && !creation.value.checking);
   const state = readonly(reactive({ ...Object.fromEntries(Object.keys(fields).map(key => [key, computed(() => fields[key])])),
     pending, inFlight, unknown, reviewing, provisioning, provisioningUnknown,
     dirty, busy, mutable, editableRows, rows, grants, everybody, namedLevels: accessLevels, everybodyLevels: accessLevels.filter(level => level.value !== "admin"),
     dialogTitle: computed(() => fields.dialog === "create" ? "Create and add account" : "Add existing account"),
     canSave: computed(() => editableRows.value && dirty.value),
-    canReview,
+    canReview, canCheckCreation,
   }));
   // Retained work is not a renderable projection. The form still owns exact
   // receipts and departure decisions after the Admin view is withheld.
   const presentation = computed(() => canManage() && current() ? state : Object.freeze({
-    status: original() && fields.status === "Access saved." ? fields.status : "",
+    status: original() && ["Access saved.", "Account created and added."].includes(fields.status) ? fields.status : "",
     canReview: original() && unknown.value && state.canReview,
-    error: original() && unknown.value ? "Review the outcome of your submitted access change." : "",
+    canCheckCreation: canCheckCreation.value,
+    checkingCreation: original() && !!creation.value?.checking,
+    error: !original() ? "" : provisioningUnknown.value ? "Check the outcome of your submitted account creation." :
+      unknown.value ? "Review the outcome of your submitted access change." : "",
   }));
   const adapters = {
     owner: form,
@@ -360,7 +364,7 @@ export function createIdentityAccessSettingsState({ read = getIdentityAccess, wr
   }
   async function reviewCreation() {
     const attempt = creation.value;
-    if (!original() || !attempt?.unknown || attempt.checking) return false;
+    if (!canCheckCreation.value) return false;
     attempt.checking = true;
     const work = start(recovery, "create-outcome", { id: attempt.operationId }, "retained");
     try {
@@ -381,6 +385,7 @@ export function createIdentityAccessSettingsState({ read = getIdentityAccess, wr
       await load({ retain: true }, attempt);
       if (original() && ownsCreation(attempt)) {
         fields.error = "The account was not added. Check your details and try again.";
+        if (!current() || !canManage()) { fields.dialog = null; fields.login = ""; }
         creation.value = null;
       }
       return attempt.committed;

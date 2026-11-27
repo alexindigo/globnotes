@@ -20,7 +20,7 @@ import { createConflictInbox } from "../conflictInbox.js";
 import { canCreateNote } from "../noteCreation.js";
 import { registerSessionParticipant, resolveParticipants } from "../sessionActions.js";
 import { createSettingsPageState } from "../settingsPageState.js";
-import { reauthenticationRequest } from "../reauthentication.js";
+import { reauthenticationRequest, requestReauthentication } from "../reauthentication.js";
 import * as pluginRuntime from "../pluginRuntime.js";
 
 const cleanups = [];
@@ -398,7 +398,7 @@ it.each(["first-read-first", "newest-read-first"])("sign-in follows the accepted
 });
 it.each(["different-account", "revoked"])("a superseding %s cannot complete an old sign-in", async winner => {
   let hold, reads = 0;
-  const f = app({ transport: { getToken: async () => "bob.jwt", getConfig: async () => {
+  const f = app({ account: null, transport: { getToken: async () => "bob.jwt", getConfig: async () => {
     if (reads++ === 0) { await hold(); return projection("bob", "admin"); }
     if (winner === "revoked") throw Object.assign(new Error("revoked"), { status: 401 });
     return projection("charlie", "view");
@@ -407,8 +407,8 @@ it.each(["different-account", "revoked"])("a superseding %s cannot complete an o
   await heldOperation(controlled("old sign-in", f.session), boundary => { hold = boundary; return login.login.logIn(); }, async original => {
     await original.reached(); await f.session.refresh(); await original.result();
     expect(login.navigate.mock.calls).toEqual([]);
-    expect([f.current.value.principal.id, f.session.state.valid, f.session.state.reloadRequired?.detail]).toEqual([
-      "alice", false, winner === "different-account" ? "You're now signed in as charlie. Reload to continue." : undefined,
+    expect([f.current.value.principal, f.session.state.valid, f.session.state.reloadRequired]).toEqual([
+      projection(winner === "revoked" ? null : "charlie").principal, winner !== "revoked", null,
     ]);
   });
 });
@@ -498,9 +498,16 @@ it("identity reauthentication restores only the runtime owned by the accepted pr
     transport: { getConfig }, stopRuntime() {}, applyBrand() {}, retainedWork: () => true, startRuntime });
   cleanups.push(session.dispose); session.adopt(fresh.value);
   try {
-    expect(await session.refresh()).toBe(false);
+    const legacy = requestReauthentication();
     await vi.waitFor(() => expect(reauthenticationRequest.value).not.toBeNull());
+    const obsolete = reauthenticationRequest.value;
+    legacyStop.mockClear();
+    expect(await session.refresh()).toBe(false);
+    await vi.waitFor(() => expect(reauthenticationRequest.value?.id).toBeGreaterThan(obsolete.id));
     const form = reauthenticationRequest.value;
+    expect(await obsolete.authenticated()).toBe(false);
+    expect(await legacy).toBe(false);
+    expect(await requestReauthentication()).toBe(false);
     expect((await session.signIn("new", { login: "alice" })).current()).toBe(true);
     expect(await form.authenticated()).toBe(true);
     expect([startRuntime.mock.calls.length, legacyStart.mock.calls, legacyStop.mock.calls, reauthenticationRequest.value]).toEqual([2, [], [], null]);
@@ -512,6 +519,23 @@ it("denied optional Admin work revalidates a live reader without restarting its 
   expect(await f.session.authorityChanged({ status: 403 })).toBe(true);
   expect([f.session.key(), f.session.state.valid, f.events.slice(events.length)]).toEqual([before, true, ["config"]]);
   expect(f.io.getConfig.mock.calls).toEqual([[{ signal: undefined }]]);
+});
+it("a current 401 retires the reader and fences the older optional Admin recheck", async () => {
+  let hold;
+  const denied = Object.assign(Error("revoked"), { status: 401 });
+  const getConfig = vi.fn().mockImplementationOnce(async () => { await hold(); return projection("alice", "admin", 9); }).mockRejectedValueOnce(denied);
+  const f = app({ transport: { getConfig } });
+  await heldOperation(controlled("obsolete Admin recheck", f.session), boundary => {
+    hold = boundary; return f.session.authorityChanged({ status: 403 });
+  }, async old => {
+    await old.reached();
+    expect(f.session.state.valid).toBe(true);
+    const refusal = f.session.authorityChanged(denied);
+    expect([f.session.key(), f.current.value.capabilities.canRead, getConfig.mock.calls.length]).toEqual([null, false, 2]);
+    expect(await refusal).toBe(false);
+    expect(await old.result()).toBe(false);
+    expect([f.session.state.valid, f.current.value.authorityRevision]).toEqual([false, 1]);
+  });
 });
 it("replacement credentials cancel held recovery and cannot adopt its old projection", async () => {
   let session, hold, token = "alice.jwt", reads = 0;

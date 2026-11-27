@@ -95,6 +95,32 @@ it.each(["demotion", "replacement"])("retained Access work does not render old A
   expect([f.controllers.access === original, original.state.dirty, wrapper.findAll('[data-account-row]').length,
     wrapper.find('[data-everybody-row]').exists()]).toEqual([true, true, 0, false]);
 });
+it.each([true, false])("the retained account creation can be checked after Admin ends (committed=%s)", async committed => {
+  const f = fixture();
+  f.access.createAccount.mockRejectedValueOnce(Error("reply lost"));
+  const readCreation = vi.fn().mockRejectedValueOnce(Error("status unavailable"))
+    .mockImplementation(async id => ({ operationId: id, committed, settled: true, ...(committed && { accountId: "jordan" }) }));
+  const controllers = createIdentitySettingsControllers({ session: f.session, navigate: f.navigate, toast: f.toast, account: f.account,
+    access: { ...f.access, readCreation } });
+  closes.push(controllers.dispose);
+  const original = controllers.access;
+  await original.load(); await original.openDialog("create");
+  original.setField("login", "jordan"); original.setField("temporaryPassword", "kept secret");
+  expect(await original.submitDialog()).toBe(false);
+  expect(original.state.provisioningUnknown).toBe(true);
+  const { operationId } = f.access.createAccount.mock.calls[0][0];
+  const wrapper = mount(AccessSettings, { props: { controller: original } }); closes.push(() => wrapper.unmount());
+  f.config.value = { ...configFor("alice", 1, "view"), vaultId: null };
+  await nextTick();
+  expect([controllers.access === original, wrapper.findAll('[data-account-row]').length, wrapper.find('#access-temporary-password').exists()]).toEqual([true, 0, false]);
+  const check = wrapper.findAll("button").find(button => button.text() === "Check account creation");
+  expect(check).toBeDefined();
+  await check.trigger("click"); await original.settle();
+  expect([readCreation.mock.calls, f.access.createAccount.mock.calls.length, f.access.read.mock.calls.length]).toEqual([
+    [[operationId, { token: "alice-token" }], [operationId, { token: "alice-token" }]], 1, 1,
+  ]);
+  expect(controllers.retainedWork()).toEqual([]);
+});
 it("instance Account keeps its own read through vault policy changes, but not account replacement", async () => {
   const f = fixture(); let hold;
   const page = createIdentityAccountPage({ session: f.session, account: f.account, navigate: f.navigate, toast: f.toast }); closes.push(page.dispose);

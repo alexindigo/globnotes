@@ -11,8 +11,9 @@ import { createOwnershipScope } from "../shared/ownership.js";
 // revision. New writes still require the controller's live permission checks.
 function retainedScope(session, account, vault) {
   const token = session.tokens.getStoredToken();
+  const credential = session.captureCredential?.();
   const key = account == null ? null : JSON.stringify([account, vault]);
-  return () => account != null && session.key() != null && session.snapshot().accountId === account &&
+  return () => account != null && (credential?.() ?? true) && session.key() != null && session.snapshot().accountId === account &&
     session.tokens.getStoredToken() === token &&
     (vault == null || session.snapshot().vaultId == null || session.snapshot().vaultId === vault) ? key : null;
 }

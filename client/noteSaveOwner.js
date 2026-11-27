@@ -17,6 +17,7 @@ export function createNoteSaveOwner({
   getState,
   capture = () => bindContext(() => true, () => getState().identity),
   captureAfterAuthentication = capture,
+  canSettleRetiredSave = () => false,
   getBuffer,
   isContentChanged,
   applyNote,
@@ -127,6 +128,12 @@ export function createNoteSaveOwner({
   async function acknowledge(snapshot, result, context) {
     const original = sent.get(snapshot), own = operations;
     const { operation } = original;
+    // A same-resource receipt that only echoes the submitted bytes can settle
+    // the original FIFO without delivering any retired projection effects.
+    if (!identityCurrent() && snapshot.intent === "save" && context.sourcePath === result.path &&
+        snapshot.content === result.content && readOwnerScope() === ownerScope && canSettleRetiredSave()) {
+      return { baseContent: snapshot.content };
+    }
     const effect = (name, ...args) => { if (!own.deliver(operation, name, args)) throw retiredContext(); };
     effect("draft", pendingDrafts.get(snapshot.submissionId));
     const newer = queue.state().queued;

@@ -40,6 +40,7 @@ export function createIdentityNoteController({ session, prefix = readPathPrefix(
   const drafts = Object.fromEntries(["save", "load", "base", "clear", "clearClean", "clearAcknowledged", "captureAcknowledgement", "release"].map(name => [name, (...args) => store[name](...args)]));
   const canRead = () => session.key() != null && session.snapshot().capabilities?.canRead === true;
   return createNoteController({ ...adapters, drafts, sessionKey: session.key, captureSession: session.capture, canRead,
+    requestAuthentication: session.requestReauthentication,
     reloadRequired: () => session.state.reloadRequired, ownerScope: () => identityOwnerKey(session.snapshot()),
     ownerCurrent: () => identityOwnerKey(session.snapshot()) === owner,
     rebindReader: () => {
@@ -73,6 +74,7 @@ export function createNoteController({
   sessionKey = () => null,
   canRead = () => true,
   captureSession,
+  requestAuthentication,
   reloadRequired = () => false,
   ownerCurrent, rebindReader = () => false,
   ownerScope = () => getContext().capabilities ? identityOwnerKey(getContext()) : sessionKey(),
@@ -186,6 +188,8 @@ export function createNoteController({
   });
   const saveOwner = saveOwnerFactory({
     ownerId,
+    requestAuthentication,
+    canSettleRetiredSave: () => editMode.value && retainsNoteOwner(),
     capture: captureSessionLifetime,
     captureAfterAuthentication: originalOwner => {
       if (!editMode.value || ownerScope() !== originalOwner) return null;
@@ -222,7 +226,9 @@ export function createNoteController({
     publishTitle, setMovedFiles: files => { lastMovedFiles.value = files; },
     urlSync, updateRenamedLinks, drafts, requestDecision: requestNoteDecision,
     changed: state => {
+      const wasUnresolved = queueState.value.unresolved;
       saveOwnerState.value = state; queueState.value = state.queue;
+      if (wasUnresolved && !state.queue.unresolved) adoptNoteAuthority();
       if (pendingVaultEntry && !state.queue.inFlight && !["preparing", "sending"].includes(state.queue.status)) {
         const entry = pendingVaultEntry; pendingVaultEntry = null;
         const current = captureNote();
@@ -665,13 +671,20 @@ export function createNoteController({
     editorActionUnsubs.forEach(fn => fn()); editorActionUnsubs = [];
     return Promise.all([reads.dispose(), saving]);
   }
+  function retainsNoteOwner() {
+    return !reloadRequired() && ownerCurrent?.() && !lifetime.disposed;
+  }
+  function adoptNoteAuthority() {
+    const key = sessionKey();
+    if (key == null || key === noteScope.value || queueState.value.unresolved || !retainsNoteOwner() || getContext().capabilities?.canEdit !== true) return;
+    noteScope.value = key;
+    saveOwner.adoptAuthority();
+  }
   const stopIdentity = watch(sessionKey, () => {
     lifetime.advanceProjection(); externalRead = null; clearEditTimers();
     pendingVaultEntry = null; pendingVaultReset = false;
     if (ownerCurrent && !ownerCurrent() && !isDirty() && !queueState.value.unresolved && rebindReader()) editMode.value = false;
-    if (ownerCurrent?.() && sessionKey() != null && getContext().capabilities?.canEdit === true && !queueState.value.unresolved) {
-      noteScope.value = sessionKey(); saveOwner.adoptAuthority();
-    }
+    adoptNoteAuthority();
     if (!editMode.value && !queueState.value.unresolved) {
       note.value = {}; previewHtml.value = ""; loadStatus.value = "loading";
       if (mounted && sessionKey() != null) void init();

@@ -7,7 +7,7 @@ import { getToastOptions } from "./helpers.js";
 import { refreshNoteIndex } from "./noteIndex.js";
 import { refreshPluginRuntimeCatalog, stopPluginRuntime } from "./pluginRuntime.js";
 import { hasUnsavedWork, resolveParticipants, retainUnsavedWork } from "./sessionActions.js";
-import { requestIdentityReauthentication } from "./reauthentication.js";
+import { createIdentityReauthentication } from "./reauthentication.js";
 import { clearStoredToken, createIdentityTokenStorage } from "./tokenStorage.js";
 import { identitySessionKey } from "./appSessionPolicy.js";
 import { createOperationOwner } from "./operationOwner.js";
@@ -20,7 +20,7 @@ export function createIdentityAppSession({ config, setConfig, tokens = createIde
   setChangesSession = () => {}, setBrowseSession = () => {}, clearBrowseData = () => {}, refreshNotes = () => {},
   applyBrand = applyBrandToDocument, navigate = () => {}, failed = () => {},
   reloadPage = () => window.location.reload(),
-  recover, outage = () => {}, retainedWork = hasUnsavedWork, reauthenticate = requestIdentityReauthentication, currentRoute = () => null } = {}) {
+  recover, outage = () => {}, retainedWork = hasUnsavedWork, reauthenticate, currentRoute = () => null } = {}) {
   const ready = ref(false), valid = ref(false), reloadRequired = ref(null);
   let latestRead, transitionPending = null, documentAccount = null, locking = false, loginProof = null;
   let acceptedSignIn = null, releaseRecovery = null, authorityRead = null, credentialHandoff = null;
@@ -42,6 +42,8 @@ export function createIdentityAppSession({ config, setConfig, tokens = createIde
   const context = createSessionContext({ key, tokens, isOpen: () => !reloadRequired.value });
   const unavailable = () => context.disposed || locking || !!reloadRequired.value;
   const { capture, captureCredential } = context;
+  const recoveryDialog = createIdentityReauthentication();
+  const requestReauthentication = reauthenticate ?? recoveryDialog.request;
   const io = transport ?? createIdentityApi({ http, context, onAuthorityFailure: authorityChanged });
   const attempt = createOperationOwner({ owner: Object.freeze({}),
       dispatch: intent => intent === "logout" ? resolve("logout") : intent === "login" ? resolve("login") :
@@ -152,7 +154,7 @@ export function createIdentityAppSession({ config, setConfig, tokens = createIde
         if (!retainAndRetire(failureCurrent)) return false;
         if (!credentialHandoff?.current() && status === 401) {
           const completing = context.captureTransition();
-          if (retainedWork()) { if (completing()) reauthenticate(); }
+          if (retainedWork()) { if (completing()) requestReauthentication(); }
           else {
             if (!completing()) return false;
             ready.value = true;
@@ -211,11 +213,14 @@ export function createIdentityAppSession({ config, setConfig, tokens = createIde
   }
   function authorityChanged(error, originating = capture()) {
     if (!originating()) return Promise.resolve(false);
-    if (credentialHandoff?.current()) { credentialHandoff.deferred = true; return Promise.resolve(false); }
-    if (authorityRead?.current()) return authorityRead.pending;
+    const optionalRefusal = (error?.response?.status ?? error?.status) === 403;
+    const handoff = credentialHandoff?.current() ? credentialHandoff : null;
+    // Only a refusal that leaves reader authority intact may join a recheck.
+    if (optionalRefusal && !handoff && authorityRead?.current()) return authorityRead.pending;
     retainUnsavedWork();
     if (!originating()) return Promise.resolve(false);
-    if ((error?.response?.status ?? error?.status) !== 403 && !retire({ preserveSignIn: !error, withdraw: true })) return Promise.resolve(false);
+    if (!optionalRefusal && !retire({ preserveSignIn: !error, withdraw: true })) return Promise.resolve(false);
+    if (handoff?.current()) { handoff.deferred = true; return Promise.resolve(false); }
     const read = { current: capture() };
     authorityRead = read;
     read.pending = refresh().finally(() => { if (authorityRead === read) authorityRead = null; });
@@ -258,6 +263,7 @@ export function createIdentityAppSession({ config, setConfig, tokens = createIde
   return Object.freeze({ state: readonly(reactive({ ready, valid, reloadRequired })), key, capture, captureCredential,
     load: refresh, refresh, acceptProjection: () => refresh({ accepted: true }), adopt, invalidate: () => !unavailable() && retire({ withdraw: true }), beforeSignIn, acceptToken, signIn, logout, transport: io, tokens,
     authorityChanged, beginCredentialHandoff,
+    requestReauthentication,
     isDisposed: () => context.disposed,
     hasWork: () => attempt.hasWork(), settle: () => attempt.settle(),
     snapshot: () => config(),
@@ -268,7 +274,7 @@ export function createIdentityAppSession({ config, setConfig, tokens = createIde
       const proof = loginProof; loginProof = null;
       return proof?.current() ? proof.proof : null;
     },
-    dispose() { if (!context.disposed) { stopSharedSignIn?.(); context.dispose(); retire({ closing: true }); } return attempt.dispose(); },
+    dispose() { if (!context.disposed) { stopSharedSignIn?.(); context.dispose(); recoveryDialog.close(); retire({ closing: true }); } return attempt.dispose(); },
   });
 }
 
