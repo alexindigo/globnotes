@@ -20,7 +20,7 @@ export function createIdentityAppSession({ config, setConfig, tokens = createIde
   applyBrand = applyBrandToDocument, navigate = () => {}, failed = () => {},
   reloadPage = () => window.location.reload() } = {}) {
   const ready = ref(false), valid = ref(false), reloadRequired = ref(null);
-  let latestRead, transitionPending = null, activeAccount = null, locking = false;
+  let latestRead, transitionPending = null, documentAccount = null, locking = false;
   const key = () => valid.value ? identitySessionKey(config()) : null;
   const context = createSessionContext({ key, tokens, isOpen: () => !reloadRequired.value });
   const unavailable = () => context.disposed || locking || !!reloadRequired.value;
@@ -53,7 +53,7 @@ export function createIdentityAppSession({ config, setConfig, tokens = createIde
     if (unavailable()) return false;
     if (!fresh?.capabilities || !fresh.principal || !fresh.sessionGeneration) throw new Error("Invalid identity projection.");
     const account = fresh.principal.kind === "account" ? fresh.accountId ?? fresh.principal.id : null;
-    if (activeAccount !== null && account !== null && account !== activeAccount) {
+    if (documentAccount !== null && account !== null && account !== documentAccount) {
       // The next account never receives a live projection in this document.
       // Flush while the outgoing editor still owns its original storage scope.
       locking = true;
@@ -71,7 +71,8 @@ export function createIdentityAppSession({ config, setConfig, tokens = createIde
     setConfig(fresh); if (!adopting()) return false;
     valid.value = true; if (!adopting()) return false;
     ready.value = true; if (!adopting()) return false;
-    activeAccount = account;
+    // Guest recovery retires the live principal, not this document's named owner.
+    if (account !== null) documentAccount = account;
     if (fresh.capabilities.canRead) {
       applyBrand(fresh.brand); if (!adopting()) return false;
       if (changed) {
@@ -108,7 +109,7 @@ export function createIdentityAppSession({ config, setConfig, tokens = createIde
     if (unavailable()) return false;
     // A named account can obtain new proof without asking the old editor to
     // save/discard; its actual account id is verified by the config response.
-    if (activeAccount !== null) return true;
+    if (documentAccount !== null && config().principal?.kind === "account") return true;
     const current = capture(), owner = attempt, operation = owner.operation("live", current);
     try { return (await owner.dispatch(operation, "login")).value === "proceed" && current(); }
     finally { await owner.release(operation); }

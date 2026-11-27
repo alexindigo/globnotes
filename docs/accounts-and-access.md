@@ -324,7 +324,8 @@ After a different named account signs in, including through a shared remembered
 sign-in in another tab, an existing document retains the old account's drafts
 and retires its live access. It does not install the new account's view until
 the user presses Reload in the persistent toast. Renewing the same account
-keeps the document in place; signing out still uses the guest handoff.
+keeps the document in place. Signing out still uses the guest handoff, but the
+document remembers which named account used it until it reloads.
 
 Remembered and session-only note drafts recover the newest surviving draft for
 the same account, vault, and note. Acknowledging a save or explicitly discarding

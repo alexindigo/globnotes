@@ -113,6 +113,22 @@ it("accepting a renewed credential for the same account does not require reload"
   expect([f.current.value.sessionGeneration, f.session.state.reloadRequired, f.reloadPage.mock.calls]).toEqual(["renewed", null, []]);
 });
 
+it.each(["alice", "bob"])("after Alice signs out to guest, signing in as %s respects the document's account", async login => {
+  let f;
+  const getConfig = vi.fn(async () => f.tokens.getStoredToken() ? projection(login, "edit") : projection(null));
+  f = app({ transport: { getToken: vi.fn(async () => `${login}.next`), getConfig } });
+  expect(await f.session.logout()).toBe(true);
+  await waitUntil(() => f.current.value.principal.kind === "guest" ? done() : pending(f.current.value.principal), { label: "guest projection after logout" });
+  expect(f.session.state.reloadRequired).toBeNull();
+  const authenticated = vi.fn();
+  await flow(f, { credentials: () => ({ username: login, password: "password" }), authenticated }).login.logIn();
+  const different = login === "bob";
+  expect([f.current.value.principal, f.session.state.valid, authenticated.mock.calls, f.reloadPage.mock.calls]).toEqual(different
+    ? [{ kind: "guest" }, false, [], []] : [projection("alice").principal, true, [[]], []]);
+  expect(f.session.state.reloadRequired).toEqual(different
+    ? { detail: "You're now signed in as bob. Reload to continue.", actionLabel: "Reload", action: expect.any(Function) } : null);
+});
+
 it("a replacement installed while the logout clears storage owns the next transition", async () => {
   let token = "original", session, clearing;
   const tokens = { getStoredToken: () => token, storeToken(value) { token = value; }, clearStoredToken() {
@@ -549,12 +565,15 @@ it("pending Settings writes settle independently without giving Bob the old ackn
   });
 });
 
-it("a retired Settings failure retains its outcome and submitted values for same-owner read-back", async () => {
+it.each([false, true])("a retired Settings failure requires read-back after two same-owner renewals (intervening write: %s)", async intervening => {
   const generation = ref("first"), writes = [];
+  const initial = { values: { text: "base", other: "base" }, revision: 1 };
+  const changed = { values: { text: "changed elsewhere", other: "base" }, revision: 2 };
+  let remote = initial;
   const page = { id: "plugin:p:settings", available: true, descriptor: { fields: [{ key: "text", type: "text" }, { key: "other", type: "text" }] } };
   let hold;
   const settings = createSettingsPageState({ getSession: () => generation.value, getRecoveryScope: () => "alice/vault", registry: {
-    find: () => page, read: async () => ({ values: { text: "base", other: "base" }, revision: 1 }),
+    find: () => page, read: async () => remote,
     async commit(_, values, revision) {
       writes.push([generation.value, values, revision]);
       if (writes.length === 1) { await hold(); throw Error("Lost write response"); }
@@ -569,13 +588,24 @@ it("a retired Settings failure retains its outcome and submitted values for same
     const settlement = settings.settle();
     expect(await work.result()).toBe(false);
     expect(await settlement).toBe(false);
-    const { committed, drafts, message, recovery } = settings.snapshot(page.id);
-    expect([committed, drafts, message, recovery]).toEqual([{ text: "base", other: "base" },
-      { text: "submitted", other: "newer typing" }, "Lost write response", { visible: true, label: "Check current status" }]);
+    const snapshot = () => {
+      const { committed, drafts, message, recovery } = settings.snapshot(page.id);
+      return [committed, drafts, message, recovery];
+    };
+    const retained = { text: "submitted", other: "newer typing" };
+    const recovery = { visible: true, label: "Check current status" };
+    expect(snapshot()).toEqual([initial.values, retained, "Lost write response", recovery]);
+    if (intervening) remote = changed;
+    generation.value = "renewed again";
+    await settings.load(page.id);
+    expect(snapshot()).toEqual([remote.values, retained, "Lost write response", recovery]);
+    expect(await settings.settle()).toBe(false);
     expect(await settings.commit(page.id)).toBe(false);
-    expect(await settings.retry(page.id)).toBe(true);
-    expect(settings.snapshot(page.id).drafts).toEqual({});
-    expect(writes).toEqual([["first", { text: "submitted", other: "old typing" }, 1], ["fresh", { text: "submitted", other: "newer typing" }, 1]]);
+    expect(await settings.retry(page.id)).toBe(!intervening);
+    const original = ["first", { text: "submitted", other: "old typing" }, 1];
+    expect(writes).toEqual(intervening ? [original] : [original, ["renewed again", retained, 1]]);
+    expect(settings.snapshot(page.id).drafts).toEqual(intervening ? retained : {});
+    if (intervening) expect(settings.snapshot(page.id).message).toBe("Settings changed elsewhere. Your draft is retained.");
   });
 });
 

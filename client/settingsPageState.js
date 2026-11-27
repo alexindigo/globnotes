@@ -118,7 +118,7 @@ export function createSettingsPageState({ registry, confirm, getSession = () => 
     if (!record) {
       const page = registry.find(id);
       if (!page) throw new Error(`Unavailable settings page: ${id}`);
-      record = reactive({ id, key, page, session: getSession(), recoveryScope: scope, available: page.available !== false, values: {}, revision: 0, sourceKey: undefined, fields: {}, drafts: {}, versions: {}, errors: {}, status: "unloaded", loaded: false, generation: 0, message: "", uncertain: null, changedDescriptor: null });
+      record = reactive({ id, key, page, session: getSession(), recoveryScope: scope, available: page.available !== false, values: {}, revision: 0, sourceKey: undefined, fields: {}, drafts: {}, versions: {}, errors: {}, status: "unloaded", loaded: false, generation: 0, message: "", uncertain: null, writeFailed: false, changedDescriptor: null });
       records.set(key, record);
     }
     return record;
@@ -208,6 +208,7 @@ export function createSettingsPageState({ registry, confirm, getSession = () => 
     }
     const failure = recovery.failure;
     if (!failure) return;
+    record.writeFailed = true;
     record.status = failure.status;
     record.message = failure.message;
     const submitted = failure.uncertain;
@@ -241,6 +242,7 @@ export function createSettingsPageState({ registry, confirm, getSession = () => 
           record.status = "idle";
           record.loaded = true;
           record.message = "";
+          record.writeFailed = false;
           restore(record);
         }
       } catch (error) {
@@ -269,15 +271,19 @@ export function createSettingsPageState({ registry, confirm, getSession = () => 
     record.status = "idle";
     record.message = "";
     record.uncertain = null;
+    record.writeFailed = false;
     if (!dirty(record)) record.recovered = false;
   }
   function rejectWrite(record, submitted, error) {
+    record.writeFailed = true;
     record.status = error.response?.status === 409 ? "conflict" : "error";
     record.message = error.response?.data?.detail ?? error.message;
     record.uncertain = !error.clientScopeRetired && (!error.response || error.response.data?.code === "plugin_settings_source_commit_failed") ? submitted : null;
   }
   function writeFailure(record) {
-    return record.submitted && ["conflict", "error"].includes(record.status)
+    // A recovered outcome belongs to the record even when this generation
+    // has never submitted a wire of its own.
+    return record.writeFailed && ["conflict", "error"].includes(record.status)
       ? { status: record.status, message: record.message, uncertain: record.uncertain } : undefined;
   }
   function pendingWrite(record) {
@@ -386,6 +392,9 @@ export function createSettingsPageState({ registry, confirm, getSession = () => 
           record.sourceKey = result.sourceKey;
           record.fields = copy(result.fields ?? {});
           record.uncertain = null;
+          record.writeFailed = false;
+          record.status = "idle";
+          record.message = "";
         }
       } catch (error) { if (current()) record.message = error.message; return false; }
       finally { if (reviews.get(key) === submitted) reviews.delete(key); adoptDescriptor(record); }
@@ -421,7 +430,7 @@ export function createSettingsPageState({ registry, confirm, getSession = () => 
       record.message = "";
       // Explicit discard approves only these records. A future retry still
       // needs read-back if an already-admitted write had an unknown outcome.
-      if (!record.uncertain) record.status = "unloaded";
+      if (!record.uncertain) { record.status = "unloaded"; record.writeFailed = false; }
       adoptDescriptor(record);
     }
     return true;
