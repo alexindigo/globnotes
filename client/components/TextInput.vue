@@ -1,7 +1,7 @@
 <template>
   <div v-if="reveal" class="password-field dark:bg-theme-background-elevated focus-within:ring-1 focus-within:ring-theme-brand">
-    <input :type="visible ? 'text' : type" :value="model" class="text-input password-input min-w-0 w-full" @input="model = $event.target.value" v-bind="$attrs" ref="input" />
-    <button type="button" class="focus-ring password-eye" :aria-label="visible ? 'Hide password' : 'Show password'" :aria-controls="$attrs.id" :aria-pressed="visible" @click="visible = !visible"><Icon :icon="visible ? tabEye : tabEyeOff" width="18" height="18" /></button>
+    <input :type="visible ? 'text' : type" :value="model" class="text-input password-input min-w-0 w-full" :disabled="disabled" @input="model = $event.target.value" v-bind="$attrs" ref="input" />
+    <button type="button" class="focus-ring password-eye" :disabled="disabled" :aria-label="visible ? 'Hide password' : 'Show password'" :aria-controls="$attrs.id" :aria-pressed="visible" @click="visible = !visible"><Icon :icon="visible ? tabEye : tabEyeOff" width="18" height="18" /></button>
   </div>
   <input
     v-else
@@ -18,6 +18,7 @@
       'rounded border border-theme-border bg-theme-background px-2 py-[3px] text-[0.8rem] text-theme-text focus:border-theme-brand': variant === 'compact',
     }"
     :value="model"
+    :disabled="disabled"
     @input="model = $event.target.value"
     v-bind="$attrs"
     ref="input"
@@ -35,6 +36,7 @@ defineProps({
   // Opt-in input type (default text) — e.g. password fields in setup.
   type: { type: String, default: "text" },
   reveal: { type: Boolean, default: false },
+  disabled: Boolean,
   variant: { type: String, default: 'field', validator: value => ['field','settings','plain','plain-muted','search','compact'].includes(value) },
 });
 const model = defineModel();

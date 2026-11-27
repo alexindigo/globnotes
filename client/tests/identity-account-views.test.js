@@ -3,6 +3,7 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
+import { nextTick } from "vue";
 import { createAccountSettingsState } from "../accountSettingsState.js";
 import { createIdentitySetupFormState } from "../setupFormState.js";
 import { createIdentityLoginState } from "../loginFlow.js";
@@ -30,6 +31,48 @@ it("recipient renders two private-password fields and logout, without current-pa
   await c.load(); const w = render(RequiredPasswordForm, c);
   expect(w.text()).toContain("jordan"); expect(w.findAll('input[type="password"]')).toHaveLength(2);
   expect(w.text()).not.toContain("Current password"); expect(w.text()).not.toContain("Authenticator"); expect(w.text()).toContain("Log out");
+});
+it.each([[AccountSettings, "account"], [RequiredPasswordForm, "required"]])("links the visible mismatch to both native password inputs (%#)", async (component, prefix) => {
+  const write = vi.fn(), resolve = vi.fn();
+  const c = createAccountSettingsState({ read: async () => ({ login: "alice", totpEnabled: false, passwordChangeRequired: prefix === "required" }),
+    token: () => "token", write, resolve, consumeProof: () => ({ username: "alice", password: "temporary" }) });
+  await c.load(); const w = render(component, c);
+  const inputs = [w.get(`#${prefix}-new-password`), w.get(`#${prefix}-confirm-password`)];
+  if (prefix === "account") await w.get("#account-current-password").setValue("old");
+  await inputs[0].setValue("new"); await inputs[1].setValue("different");
+  await w.get("form").trigger("submit");
+  const invalidity = () => inputs.map(input => {
+    const id = input.attributes("aria-describedby");
+    return [input.attributes("aria-invalid"), id && document.getElementById(id)?.textContent];
+  });
+  const mismatch = "Enter the same new password in both fields.";
+  expect(invalidity()).toEqual([["true", mismatch], ["true", mismatch]]);
+  await inputs[1].setValue("new");
+  expect([invalidity(), resolve.mock.calls, write.mock.calls]).toEqual([[[undefined, undefined], [undefined, undefined]], [], []]);
+});
+it("shows the held resolution and locks the authenticator dialog controls", async () => {
+  const entered = Promise.withResolvers(), decision = Promise.withResolvers();
+  const c = createAccountSettingsState({ read: async () => ({ login: "alice", credentialRevision: 1, totpEnabled: true }),
+    token: () => "token", resolve: () => { entered.resolve(); return decision.promise; } });
+  await c.load(); const w = render(AccountSettings, c);
+  await c.beginAuthenticator("remove");
+  await w.get("#account-dialog-current-password").setValue("old");
+  await w.get("#account-dialog-current-code").setValue("654321");
+  const attempt = c.requestChange("remove");
+  let held;
+  const snapshot = () => {
+    const dialog = w.get('[role="dialog"]');
+    return [dialog.find('[role="status"]').exists() ? dialog.get('[role="status"]').text() : null,
+      dialog.findAll("input, button").map(control => [control.attributes("id") ?? control.attributes("aria-label") ?? control.text(), control.element.disabled])];
+  };
+  try { await entered.promise; await nextTick(); held = snapshot(); }
+  finally { decision.resolve("cancel"); }
+  expect(await attempt).toBe(false);
+  const controls = ["Close", "account-dialog-current-password", "Show password", "account-dialog-current-code", "Cancel", "Remove authenticator"];
+  expect(held).toEqual(["Preparing to change your credentials...", controls.map(label => [label, true])]);
+  expect([snapshot(), w.get('[role="dialog"] [role="alert"]').text()]).toEqual([
+    [null, controls.map(label => [label, false])], "Credential change cancelled.",
+  ]);
 });
 it("setup displays View, no guest Admin, and forwards radio and field intents", async () => {
   const c = createIdentitySetupFormState({ submit: vi.fn() }), w = render(IdentitySetupForm, c);

@@ -89,6 +89,25 @@ it("one departure resolution captures the form before waiting", async () => {
   f.controller.setField("newPassword", "changed"); held.resolve("proceed"); await first;
   expect(resolve.mock.calls).toEqual([["changing your credentials"]]); expect(f.controller.state.newPassword).toBe("new");
 });
+it("a held departure refuses dialog cancellation and keeps the captured enrollment intact", async () => {
+  const held = Promise.withResolvers(), entered = Promise.withResolvers();
+  const resolve = vi.fn(() => { entered.resolve(); return held.promise; });
+  const { controller: c, write } = await account({ resolve });
+  await c.beginAuthenticator("enable");
+  c.setField("currentPassword", "old"); c.setField("newTotpCode", "123456");
+  const attempt = c.requestChange("enable");
+  let whileResolving, allowed;
+  try {
+    await entered.promise;
+    allowed = [c.cancelDialog(), c.cancelConfirmation(), c.setField("newTotpCode", "000000"), await c.confirmChange()];
+    whileResolving = [c.state.activity, c.state.dialog, c.state.newTotpCode, c.state.enrollment.candidate, c.state.confirmation];
+  } finally { held.resolve("proceed"); }
+  expect(await attempt).toBe(true);
+  expect(allowed).toEqual([false, false, false, false]);
+  expect(whileResolving).toEqual([{ kind: "resolving", message: "Preparing to change your credentials..." }, "enable", "123456", candidate, null]);
+  expect(c.cancelConfirmation()).toBe(true);
+  expect([c.state.activity, c.state.dialog, c.state.newTotpCode, c.state.enrollment.candidate, write.mock.calls]).toEqual([{ kind: "idle" }, "enable", "123456", candidate, []]);
+});
 it("a replacement identity cannot submit a retained confirmation", async () => {
   const f = await account(); f.password(); await f.controller.requestChange(); f.changeIdentity();
   expect(await f.controller.confirmChange()).toBe(false); expect([f.write.mock.calls, f.clearToken.mock.calls]).toEqual([[], []]);
@@ -119,7 +138,8 @@ it("whole-form disposal ends even an admitted completion", async () => {
 });
 it("definite rejection retains the current form and token", async () => {
   const f = await account({ write: async () => { throw { response: { status: 422 } }; } }); f.password(); await f.controller.requestChange(); await f.controller.confirmChange();
-  expect([f.clearToken.mock.calls, f.controller.state.newPassword, f.controller.state.error]).toEqual([[], "new", "Your credentials could not be changed. Check your details and try again."]);
+  expect([f.clearToken.mock.calls, f.controller.state.newPassword, f.controller.state.activity]).toEqual([[], "new",
+    { kind: "refused", reason: "write-rejected", message: "Your credentials could not be changed. Check your details and try again." }]);
 });
 it("late enrollment cannot be adopted by a replacement", async () => {
   const held = Promise.withResolvers(), f = await account({ enrol: () => held.promise });
@@ -130,6 +150,14 @@ it("required-password reload without the transient proof asks normal sign-in", a
   const f = await account({ read: async () => ({ login: "alice", passwordChangeRequired: true }), consumeProof: () => null });
   expect(f.signedOut.mock.calls).toEqual([[{ message: "Sign in again to choose your password.", uncertain: false }]]); expect(f.clearToken.mock.calls).toEqual([[]]);
 });
+it("a replaced account cannot be retired by the temporary-proof reader", async () => {
+  let token = "old-token";
+  const retire = vi.fn(), clearToken = vi.fn(), signedOut = vi.fn();
+  const c = owned(createAccountSettingsState({ token: () => token, retire, clearToken, signedOut,
+    read: async () => ({ login: "alice", passwordChangeRequired: true }),
+    consumeProof: () => { token = "replacement"; return null; } }));
+  expect([await c.load(), token, retire.mock.calls, clearToken.mock.calls, signedOut.mock.calls]).toEqual([null, "replacement", [], [], []]);
+});
 it("temporary completion requires matching transient proof and no voluntary confirmation", async () => {
   const f = await account({ read: async () => ({ login: "alice", credentialRevision: 0, passwordChangeRequired: true, totpEnabled: false }) });
   f.controller.setField("newPassword", "private"); f.controller.setField("confirmPassword", "private");
@@ -137,6 +165,33 @@ it("temporary completion requires matching transient proof and no voluntary conf
   expect(f.controller.acceptTemporaryProof({ username: "alice", password: "temporary" })).toBe(true); await f.controller.completeRequired();
   const payload = f.write.mock.calls[0][0]; expect(payload).toEqual({ revision: 0, updateId: payload.updateId, currentPassword: "temporary", newPassword: "private" });
   expect(f.controller.state.confirmation).toBeNull();
+});
+it.each([undefined, () => ({ username: "bob", password: "temporary" })])("required completion reports missing proof even after matching passwords are entered (%#)", async consumeProof => {
+  const f = await account({ read: async () => ({ login: "alice", passwordChangeRequired: true, totpEnabled: false }), consumeProof });
+  const { controller: c } = f;
+  c.setField("newPassword", "private"); c.setField("confirmPassword", "private");
+  expect(await c.completeRequired()).toBe(false);
+  expect([c.state.activity, c.state.dialog, f.write.mock.calls]).toEqual([
+    { kind: "refused", reason: "temporary-proof", message: "Sign in again to choose your password." }, null, [],
+  ]);
+});
+it.each([false, true])("a rejected required password change restores only the proof dialog the account uses (%s)", async totpEnabled => {
+  const write = vi.fn(async () => { throw { status: 422 }; });
+  const f = await account({ read: async () => ({ login: "alice", passwordChangeRequired: true, credentialRevision: 1, totpEnabled }),
+    consumeProof: () => ({ username: "alice", password: "temporary" }), write });
+  const { controller: c } = f;
+  c.setField("newPassword", "private"); c.setField("confirmPassword", "private");
+  if (totpEnabled) {
+    expect(await c.completeRequired()).toBe(false);
+    c.setField("currentTotp", "654321");
+  }
+  expect(await c.completeRequired()).toBe(false);
+  const payload = write.mock.calls[0][0];
+  expect([c.state.dialog, c.state.activity, write.mock.calls]).toEqual([
+    totpEnabled ? "required-proof" : null,
+    { kind: "refused", reason: "write-rejected", message: "Your credentials could not be changed. Check your details and try again." },
+    [[{ revision: 1, updateId: payload.updateId, currentPassword: "temporary", newPassword: "private", ...(totpEnabled ? { currentTotp: "654321" } : {}) }, { token: "old-token" }]],
+  ]);
 });
 it("a normalized login at sign-in still carries the proven temporary password", async () => {
   const f = await account({ read: async () => ({ login: "alice", credentialRevision: 0, passwordChangeRequired: true, totpEnabled: false }) });

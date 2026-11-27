@@ -2,7 +2,7 @@
 <template>
   <section class="settings-page settings-text" data-settings-page>
     <header>
-      <div class="settings-page-heading"><h2 class="settings-heading" data-settings-page-heading>{{ title }}</h2><StatusLine :message="status" class="settings-page-status settings-help text-theme-text-muted" data-settings-status /><slot name="action" /></div>
+      <div class="settings-page-heading"><h2 class="settings-heading" data-settings-page-heading>{{ title }}</h2><StatusLine :id="statusId" :message="status" class="settings-page-status settings-help text-theme-text-muted" data-settings-status /><slot name="action" /></div>
       <p v-if="description" class="settings-page-description">{{ description }}</p>
     </header>
     <slot name="tabs" />
@@ -11,7 +11,7 @@
 </template>
 <script setup>
 import StatusLine from '../StatusLine.vue';
-defineProps({ title: String, description: String, status: { type: String, default: '' } });
+defineProps({ title: String, description: String, status: { type: String, default: '' }, statusId: String });
 </script>
 <style scoped>
 .settings-page { width:100%; min-width:0; display:flex; flex-direction:column; gap:1.5rem; color:rgb(var(--theme-text)); overflow-wrap:anywhere; }
