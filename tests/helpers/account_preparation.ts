@@ -17,6 +17,17 @@ import {
 import { identityFixture, UPDATE } from "./identity.ts";
 import { fixturePasswordHash } from "./config.ts";
 export const recoveryForRoot = (root: string) => acquireOfflineRecovery(root);
+/** Stage credentials through the supplied live fixture owner, without publishing. */
+export function prepareFixtureInitialAccount(
+  accounts: AccountRepository,
+  lease: OperationLease<"live">,
+  request: AccountPreparationRequest,
+) {
+  return accounts.credentials.prepareInitialAccount(
+    bindAccountPreparationAuthority(accounts.credentials, "initial", lease),
+    request,
+  );
+}
 /** Historical fixture input enters only the aggregate's locked import lane. */
 export function importFixtureAccount(
   accounts: AccountRepository,

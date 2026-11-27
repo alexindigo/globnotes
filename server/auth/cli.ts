@@ -4,7 +4,7 @@ import { createUuid } from "../../shared/uuid.ts";
 import { snapshotEnvironment } from "../environment.ts";
 import { BoundFileStore } from "../config/file_store.ts";
 import { singleVaultSettings } from "../config/single_vault.ts";
-import { bindSingleVault } from "../config/vault_binding.ts";
+import { captureSingleVaultBinding } from "../config/vault_binding.ts";
 import {
   IdentityBootstrap,
   identityPaths,
@@ -76,28 +76,24 @@ export async function runIdentityCli(
       return undefined;
     }], [recovery]);
     accounts = new AccountRepository(paths.instance);
-    const bindingFile = new BoundFileStore(
-      join(paths.instance, "single-vault.json"),
+    const bindingBefore = captureSingleVaultBinding(
+      paths.instance,
+      lifetime.lease.assertCurrent,
     );
-    const bindingBefore = bindingFile.capture();
     const aclFile = join(paths.vault, "access.json");
     // A persisted binding also constrains journal recovery. If absent, settle
     // any journal first so the binding owner can adopt the recovered ACL ID.
     recoveryLifetime = createOperationLease("live", [() => {
-      bindingFile.assertUnchanged(bindingBefore);
+      bindingBefore.assertUnchanged();
       return undefined;
     }], [lifetime.lease]);
-    const existing = bindingBefore.raw === null ? undefined : bindSingleVault(
-      paths.instance,
-      aclFile,
-      recoveryLifetime.lease.assertCurrent,
-    );
+    if (bindingBefore.value) bindingBefore.bind(aclFile);
     transaction = openIdentityTransaction(
       accounts,
       paths.vault,
       recoveryLifetime.lease,
       owner.authority,
-      existing?.value.id,
+      bindingBefore.value?.id,
     );
     const signing = new SessionRepository(paths.instance);
     const sessions = new InstanceSessions(accounts, signing, paths.sessions);
@@ -153,10 +149,8 @@ export async function runIdentityCli(
           signal,
         );
       } else if (target) {
-        const binding = bindSingleVault(
-          target.instancePath,
+        const binding = bindingBefore.bind(
           join(target.statePath, "access.json"),
-          lifetime.lease.assertCurrent,
           accounts,
         );
         const acl = new AclRepository(target.statePath, binding.value.id, {

@@ -3,9 +3,12 @@ import { createOwnershipScope } from "../../shared/ownership.js";
 import type { GlobalConfig } from "../config.ts";
 import { BoundFileStore } from "../config/file_store.ts";
 import { physicalStateRoot } from "../config/state_root.ts";
-import { singleVaultIdentity } from "../config/single_vault.ts";
+import { captureSingleVaultBinding } from "../config/vault_binding.ts";
 import { serviceSettings } from "../config/consumers.ts";
-import { createOperationLease } from "../operation_lease.ts";
+import {
+  createOperationLease,
+  type OperationLease,
+} from "../operation_lease.ts";
 import type { PluginManager } from "../plugins/manager.ts";
 import type { CredentialOptions } from "./account_credentials.ts";
 import { AccountRepository } from "./accounts.ts";
@@ -93,6 +96,7 @@ export async function openInstanceIdentity(
     const retain = (
       transaction: IdentityTransaction,
       retireRecovery: () => void,
+      shutdownLease?: OperationLease<"recovery">,
     ) => {
       const recoveryCustody = createOwnershipScope();
       // Retire recovery authority before releasing the acquired lock (LIFO).
@@ -103,7 +107,9 @@ export async function openInstanceIdentity(
         vaultRoot: settings.statePath,
         resume() {
           if (!completion) {
-            transaction.recover(authority);
+            if (shutdownLease) {
+              transaction.recoverAfterShutdown(authority, shutdownLease);
+            } else transaction.recover(authority);
             transaction.close();
             completion = recoveryCustody.releaseAll().then((report) =>
               report.throwIfFailed()
@@ -127,15 +133,14 @@ export async function openInstanceIdentity(
     custody.defer(() => accounts!.retireCredentials());
     // A present binding constrains replay before either participant is touched.
     // If absent, recover first, then let I14a adopt the settled ACL's exact ID.
-    const bindingFile = new BoundFileStore(
-      `${settings.instancePath}/single-vault.json`,
+    const bindingBefore = captureSingleVaultBinding(
+      settings.instancePath,
+      lease.assertCurrent,
     );
-    const bindingBefore = bindingFile.capture();
-    const existingBinding = bindingBefore.raw === null
-      ? undefined
-      : singleVaultIdentity(settings, lease.assertCurrent);
+    const accessFilename = `${settings.statePath}/access.json`;
+    if (bindingBefore.value) bindingBefore.bind(accessFilename);
     const replayLifetime = createOperationLease("live", [() => {
-      bindingFile.assertUnchanged(bindingBefore);
+      bindingBefore.assertUnchanged();
       return undefined;
     }], [offline]);
     let retainedReplay = false;
@@ -147,7 +152,7 @@ export async function openInstanceIdentity(
         settings.statePath,
         replayLifetime.lease,
         authority,
-        existingBinding?.id,
+        bindingBefore.value?.id,
         {
           checkpoint: options.recoveryCheckpoint,
           retain(transaction) {
@@ -170,7 +175,7 @@ export async function openInstanceIdentity(
         `${settings.instancePath}/config.json`,
         `${settings.statePath}/config.json`,
       ]);
-    const accessFile = new BoundFileStore(`${settings.statePath}/access.json`);
+    const accessFile = new BoundFileStore(accessFilename);
     const accessBefore = accessFile.capture();
     const before = new IdentityBootstrap(accounts, sessions, {
       lease,
@@ -179,6 +184,7 @@ export async function openInstanceIdentity(
       assertSeedTarget() {
         if (accessBefore.raw !== null) throw new IdentityRecoveryError();
         accessFile.assertUnchanged(accessBefore);
+        bindingBefore.assertUnchanged();
       },
     });
     custody.defer(() => before.dispose());
@@ -187,16 +193,14 @@ export async function openInstanceIdentity(
     }
     await before.provisionConfigured(options.seedCheckpoint);
     before.status();
-    const binding = Object.freeze({
-      ...singleVaultIdentity(settings, lease.assertCurrent),
-    });
+    const bound = bindingBefore.bind(accessFilename);
+    const binding = bound.value;
     const acl = new AclRepository(settings.statePath, binding.id, {
       accounts,
       declaredAdmin: settings.instance.vaults.entries.globnotes?.admin,
     });
-    const bindingAfter = bindingFile.capture();
     const recoveryLifetime = createOperationLease("recovery", [() => {
-      bindingFile.assertUnchanged(bindingAfter);
+      bound.assertUnchanged();
       return undefined;
     }], [offline]);
     let retainedLive = false;
@@ -212,7 +216,7 @@ export async function openInstanceIdentity(
       try {
         transaction.close();
       } catch (error) {
-        retain(transaction, recoveryLifetime.retire);
+        retain(transaction, recoveryLifetime.retire, recoveryLifetime.lease);
         retainedLive = true;
         throw error;
       }

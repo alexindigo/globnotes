@@ -7,7 +7,13 @@ import {
   assertKnownAclGrantees,
   validateAcl,
 } from "../auth/acl.ts";
-import { fields, identity, IdentityFile, record } from "../auth/records.ts";
+import {
+  fields,
+  identity,
+  IdentityFile,
+  type IdentitySnapshot,
+  record,
+} from "../auth/records.ts";
 
 export interface SingleVaultBinding {
   readonly version: 1;
@@ -39,14 +45,10 @@ function validatePolicy(value: unknown): AclState | null {
   return validateAcl(value, value.vaultId);
 }
 
-/** Open under instance ownership. Only the instance binding is published.
- * ACL bytes remain read-only, including when adopting their existing ID.
- * A caller about to modify the ACL also checks that its grantees still exist. */
-export function bindSingleVault(
+/** Keep the decoded binding and its disk witness together, including absence. */
+export function captureSingleVaultBinding(
   instanceRoot: string,
-  aclFilename: string,
   assertOwnership: () => void,
-  accounts?: AccountRepository,
 ) {
   try {
     if (
@@ -70,17 +72,41 @@ export function bindSingleVault(
       validateBinding,
       null,
     );
+    const snapshot = file.capture();
+    if (snapshot.persistence.raw !== null && snapshot.value === null) {
+      throw new VaultBindingError();
+    }
+    return Object.freeze({
+      value: snapshot.value,
+      assertUnchanged: () => file.assertUnchanged(snapshot),
+      bind: (aclFilename: string, accounts?: AccountRepository) =>
+        bindCaptured(file, snapshot, owned, aclFilename, accounts),
+    });
+  } catch (cause) {
+    throw new VaultBindingError({ cause });
+  }
+}
+
+/** The ACL stays read-only, including when adopting its existing ID. */
+function bindCaptured(
+  file: IdentityFile<SingleVaultBinding | null>,
+  before: IdentitySnapshot<SingleVaultBinding | null>,
+  owned: () => void,
+  aclFilename: string,
+  accounts?: AccountRepository,
+) {
+  try {
+    owned();
     const acl = new IdentityFile<AclState | null>(
       aclFilename,
       validatePolicy,
       null,
     );
-    const before = file.capture(), policy = acl.capture();
+    const policy = acl.capture();
     // Stored JSON null is corrupt, not an absent record.
-    if (
-      before.persistence.raw !== null && before.value === null ||
-      policy.persistence.raw !== null && policy.value === null
-    ) throw new VaultBindingError();
+    if (policy.persistence.raw !== null && policy.value === null) {
+      throw new VaultBindingError();
+    }
     const binding = before.value ?? Object.freeze({
       version: 1 as const,
       id: policy.value?.vaultId ?? createUuid(),
@@ -98,20 +124,34 @@ export function bindSingleVault(
     };
     guard();
     file.assertUnchanged(before);
-    const value = before.persistence.raw === null
-      ? file.commit(binding, before, guard)!
-      : binding;
-    const expected = file.capture();
+    if (before.value === null) file.commit(binding, before, guard);
+    // IdentityFile.capture returns the validated in-memory snapshot, including
+    // the exact publication receipt if commit installed a new binding.
+    const expected = before.value === null ? file.capture() : before;
+    const assertUnchanged = () => file.assertUnchanged(expected);
     return Object.freeze({
-      value,
+      value: expected.value!,
+      assertUnchanged,
       assertCurrent: () => {
         owned();
-        file.assertUnchanged(expected);
+        assertUnchanged();
       },
     });
   } catch (cause) {
     throw new VaultBindingError({ cause });
   }
+}
+
+export function bindSingleVault(
+  instanceRoot: string,
+  aclFilename: string,
+  assertOwnership: () => void,
+  accounts?: AccountRepository,
+) {
+  return captureSingleVaultBinding(instanceRoot, assertOwnership).bind(
+    aclFilename,
+    accounts,
+  );
 }
 
 export function openSingleVaultBinding(

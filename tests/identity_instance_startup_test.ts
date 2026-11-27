@@ -12,13 +12,17 @@ import { IdentityOwnershipError } from "../server/auth/ownership.ts";
 import { IdentityTransactionUnavailable } from "../server/auth/transaction.ts";
 import { IdentityStateError } from "../server/auth/records.ts";
 import { AuthenticationError } from "../server/auth/account_credentials.ts";
+import { VaultBindingError } from "../server/config/vault_binding.ts";
 import { OwnershipError } from "../shared/ownership.js";
 import type { PluginManager } from "../server/plugins/manager.ts";
 import { fixturePasswordHash, GlobalConfig } from "./helpers/config.ts";
 import { testEnvironment } from "./helpers/environment.ts";
 import { identityFixture, UPDATE, VAULT_A } from "./helpers/identity.ts";
 import { transactionContext } from "./helpers/identity_transaction.ts";
-import { recoveryForRoot } from "./helpers/account_preparation.ts";
+import {
+  prepareFixtureInitialAccount,
+  recoveryForRoot,
+} from "./helpers/account_preparation.ts";
 import { signIn } from "./helpers/session_delivery.ts";
 import { heldOperation } from "./helpers/owned_operation.ts";
 import { type FixtureScope, fixtureScope } from "./helpers/fixture_scope.ts";
@@ -65,6 +69,19 @@ async function locked(scope: FixtureScope, root: string) {
     () => recoveryForRoot(root),
     (owner) => owner.close(),
   )).value;
+}
+// Arm before the operation that can leave recovery in custody of the lock.
+// The fixture reports any cleanup error alongside the primary assertion.
+function recoveryJoin(scope: FixtureScope, config: GlobalConfig) {
+  let joined = false;
+  scope.defer(async () => {
+    if (!joined) await fixtureScope((cleanup) => opened(cleanup, config));
+  });
+  return async () => {
+    const instance = await opened(scope, config);
+    joined = true;
+    return instance;
+  };
 }
 function present(filename: string) {
   try {
@@ -514,6 +531,63 @@ Deno.test("instance startup: a different persisted binding refuses journal repla
     await locked(scope, config.resolved.instancePath);
   }));
 
+Deno.test("instance startup: replay uses the vault ID from the witnessed binding snapshot", () =>
+  identityFixture(async (root, scope) => {
+    const config = configuration(root);
+    const instanceRoot = config.resolved.instancePath;
+    const f = transactionContext(instanceRoot, scope, (phase) => {
+      if (phase === "decided") throw new Error("stop before publication");
+    });
+    f.signing.initialize();
+    const staged = await f.stage();
+    assertThrows(
+      () => f.transaction.commit(staged.meta, staged.parts, f.lease),
+      IdentityTransactionUnavailable,
+      "Identity publication requires recovery; no partial state is available.",
+    );
+    f.retire();
+    const binding = `${instanceRoot}/single-vault.json`;
+    const encode = (id: string) =>
+      JSON.stringify({ version: 1, id, createdAt: "2026-01-01T00:00:00.000Z" });
+    const original = encode(UPDATE);
+    Deno.writeTextFileSync(binding, original);
+    const inode = Deno.statSync(binding).ino;
+    const paths = [
+      binding,
+      `${instanceRoot}/identity-transaction.json`,
+      `${instanceRoot}/accounts.json`,
+      `${config.statePath}/access.json`,
+    ];
+    const before = paths.map(present);
+    const read = Deno.readTextFileSync;
+    let reads = 0;
+    try {
+      Deno.readTextFileSync = (path) => {
+        // Let a second reader and its local verification see the same rewrite.
+        if (path !== binding) return read(path);
+        if (++reads === 2) Deno.writeTextFileSync(binding, encode(VAULT_A));
+        try {
+          return read(path);
+        } finally {
+          if (reads === 3) Deno.writeTextFileSync(binding, original);
+        }
+      };
+      await assertRejects(
+        () => opened(scope, config),
+        VaultBindingError,
+        "Single-vault binding requires operator recovery; no identity or access policy was replaced.",
+      );
+    } finally {
+      Deno.readTextFileSync = read;
+      Deno.writeTextFileSync(binding, original);
+    }
+    assertEquals([paths.map(present), Deno.statSync(binding).ino], [
+      before,
+      inode,
+    ]);
+    await locked(scope, instanceRoot);
+  }));
+
 Deno.test("instance startup: after journal unlink the original replay keeps the lock until confirmation", () =>
   identityFixture(async (root, scope) => {
     const config = configuration(root);
@@ -533,16 +607,7 @@ Deno.test("instance startup: after journal unlink the original replay keeps the 
     f.retire();
     const journal = `${config.resolved.instancePath}/identity-transaction.json`;
     const attempts: (string | null)[] = [];
-    let joining = false;
-    const joinRecovery = (owner: FixtureScope) => {
-      joining = true;
-      return opened(owner, config);
-    };
-    // If either probe fails, finish any retained recovery after closing the
-    // probe scope. The outer fixture reports both the assertion and cleanup.
-    scope.defer(async () => {
-      if (!joining) await fixtureScope(joinRecovery);
-    });
+    const joinRecovery = recoveryJoin(scope, config);
     await fixtureScope(async (probe) => {
       await assertRejects(
         () =>
@@ -565,7 +630,7 @@ Deno.test("instance startup: after journal unlink the original replay keeps the 
         "Identity state has another live owner; stop it before recovery.",
       );
     });
-    const instance = await joinRecovery(scope);
+    const instance = await joinRecovery();
     const { principal } = await signIn(instance.sessions, {
       username: "alice",
       password: "password",
@@ -611,6 +676,7 @@ Deno.test("instance startup: a live close failure hands an unjournaled discard t
     };
     let originalAccounts: string | null;
     let oldTransaction: Awaited<ReturnType<typeof opened>>["transaction"];
+    const joinRecovery = recoveryJoin(scope, config);
     await assertRejects(
       () =>
         fixtureScope(async (live) => {
@@ -664,7 +730,7 @@ Deno.test("instance startup: a live close failure hands an unjournaled discard t
         "Identity state has another live owner; stop it before recovery.",
       )
     );
-    const reopened = await opened(scope, config);
+    const reopened = await joinRecovery();
     reopened.transaction.assertReady();
     assertEquals(
       [
@@ -684,6 +750,83 @@ Deno.test("instance startup: a live close failure hands an unjournaled discard t
       committed: true,
     });
     assertEquals(reopened.acl.capture().value.grants, { [bob.id]: "view" });
+  }));
+
+Deno.test("instance startup: recovery of an abandoned staged group releases candidates and reservations", () =>
+  identityFixture(async (root, scope) => {
+    const config = configuration(root);
+    const joinRecovery = recoveryJoin(scope, config);
+    const paths = [config.resolved.instancePath, config.statePath];
+    const candidates = () =>
+      paths.flatMap((dir) =>
+        [...Deno.readDirSync(dir)].filter((entry) =>
+          entry.name.startsWith(".config-")
+        )
+          .map((entry) => `${dir}/${entry.name}`)
+      );
+    await assertRejects(
+      () =>
+        fixtureScope(async (live) => {
+          const instance = await opened(live, config);
+          instance.acl.prepareParents();
+          const prepared = await prepareFixtureInitialAccount(
+            instance.accounts,
+            instance.lifetime,
+            { login: "alice", password: "private", updateId: UPDATE },
+          );
+          const group = instance.transaction.prepareInitial(
+            prepared,
+            "view",
+            instance.acl.capture(),
+            instance.lifetime,
+            UPDATE,
+          );
+          // If the regression fails, the old handle is a fixture-only fallback.
+          scope.defer(() => group.discard());
+          assertEquals(candidates().map((path) => Deno.statSync(path).isFile), [
+            true,
+            true,
+          ]);
+        }),
+      IdentityTransactionUnavailable,
+      "Identity publication requires recovery; no partial state is available.",
+    );
+    const [accountCandidate, accessCandidate] = candidates();
+    const remove = Deno.removeSync;
+    const refusal = new Error("staged access candidate could not be removed");
+    try {
+      Deno.removeSync = (path, options) => {
+        if (path === accessCandidate) throw refusal;
+        return remove(path, options);
+      };
+      const failure = await assertRejects(
+        () => fixtureScope((probe) => opened(probe, config)),
+        IdentityTransactionUnavailable,
+        "Identity publication requires recovery; no partial state is available.",
+      );
+      assertInstanceOf(failure.cause, AggregateError);
+      assertStrictEquals(failure.cause.errors[0], refusal);
+      assertEquals([present(accountCandidate), candidates()], [null, [
+        accessCandidate,
+      ]]);
+    } finally {
+      Deno.removeSync = remove;
+    }
+    const instance = await joinRecovery();
+    assertEquals([candidates(), instance.bootstrap.status()], [[], {
+      setupRequired: true,
+    }]);
+    const issued = await instance.bootstrap.setup({
+      username: "alice",
+      password: "private",
+      everybody: "view",
+      updateId: UPDATE,
+    });
+    const handoff = await new Response(issued.body).json();
+    assertEquals([
+      handoff.vaultId,
+      instance.acl.effectiveLevel(issued.principal),
+    ], [instance.binding.id, "admin"]);
   }));
 
 Deno.test("instance startup: closing fences an already prepared private response and retires credential issuance", () =>

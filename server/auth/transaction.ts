@@ -487,6 +487,20 @@ export class IdentityTransaction {
     }
   }
   recover(authority: OfflineRecoveryAuthority): void {
+    this.#recover(authority, false);
+  }
+  /** The instance has retired live admission and transferred its exact
+   * recovery lease with this transaction. No live caller must release a group. */
+  recoverAfterShutdown(
+    authority: OfflineRecoveryAuthority,
+    lease: OperationLease<"recovery">,
+  ): void {
+    if (lease !== this.#recoveryLease) {
+      throw new IdentityTransactionUnavailable();
+    }
+    this.#recover(authority, true);
+  }
+  #recover(authority: OfflineRecoveryAuthority, afterShutdown: boolean): void {
     const offline = assertOfflineRecovery(authority, this.#root);
     const assertCurrent = () => {
       this.#recoveryLease.assertCurrent();
@@ -494,7 +508,8 @@ export class IdentityTransaction {
     };
     assertCurrent();
     if (
-      this.#closed || this.#active || this.#staging || this.#participants.size
+      this.#closed || this.#active || this.#staging ||
+      (!afterShutdown && this.#participants.size)
     ) {
       throw new IdentityTransactionUnavailable();
     }
@@ -506,6 +521,9 @@ export class IdentityTransaction {
       for (const release of this.#cleanup) {
         this.#finishCleanup(release, assertCurrent);
       }
+      // Only undecided groups remain registered here. Discard uses the same
+      // owner as the live path and retains any failed cleanup for another join.
+      for (const group of this.#participants.keys()) group.discard();
       if (this.#unlinked) {
         const { set, phase } = this.#unlinked;
         if (phase === "prepared") this.#discardPrepared(set, assertCurrent);
