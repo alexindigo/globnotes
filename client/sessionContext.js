@@ -18,11 +18,13 @@ export function retiredContext() {
 /** The app owns one projection and credential lifetime. A credential-scoped
  * config read may start without a live projection; normal transport may not.
  * Transition contexts stay current while their own projection is installed. */
-export function createSessionContext({ key = () => undefined, tokens } = {}) {
+export function createSessionContext({ key = () => undefined, tokens, isOpen = () => true } = {}) {
   let projection = 0, credential = 0, disposed = false;
+  const captureEpoch = () => bindContext(() => !disposed && isOpen(), () => credential);
   function captureCredential() {
     const captureStorage = tokens?.capture?.();
-    return bindContext(() => !disposed && (captureStorage?.() ?? true), () => credential, () => tokens?.getStoredToken());
+    const ownsEpoch = captureEpoch();
+    return bindContext(() => ownsEpoch() && (captureStorage?.() ?? true), () => tokens?.getStoredToken());
   }
   const captureTransition = () => captureCredential().bind(() => projection);
   const capture = () => captureTransition().bind(key);
@@ -34,7 +36,9 @@ export function createSessionContext({ key = () => undefined, tokens } = {}) {
   }
   return Object.freeze({ capture, captureTransition, captureCredential, transport,
     advanceProjection() { projection++; return captureTransition(); },
-    advanceCredential() { credential++; },
+    // This marker survives this transition's own storage write but not another
+    // transition or retirement that reenters from a storage callback.
+    advanceCredential() { credential++; return captureEpoch().bind(() => projection); },
     get generation() { return projection; },
     get disposed() { return disposed; },
     dispose() { disposed = true; },

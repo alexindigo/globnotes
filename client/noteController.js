@@ -55,11 +55,13 @@ export function createNoteController({
   sessionKey = () => null,
   canRead = () => true,
   captureSession,
+  reloadRequired = () => false,
 }) {
   const noteScope = ref(sessionKey());
   const lifetime = createSessionContext({ key: sessionKey });
   const ownerScope = () => getContext().capabilities ? identityOwnerKey(getContext()) : sessionKey();
-  const canModify = computed(() => noteScope.value === sessionKey() && (getContext().capabilities ? getContext().capabilities.canEdit === true : getContext().authType != authTypes.readOnly));
+  const canModify = computed(() => !reloadRequired() && noteScope.value === sessionKey() && (getContext().capabilities ? getContext().capabilities.canEdit === true : getContext().authType != authTypes.readOnly));
+  const editorReadOnly = computed(() => !!reloadRequired());
   const isNewNote = computed(() => !getContext().path);
   const editMode = ref(false);
   const isSaveChangesModalVisible = ref(false);
@@ -135,7 +137,7 @@ export function createNoteController({
   const saveChangesMessage = computed(() => queueState.value.unresolved
     ? "Save work is retained. Discard removes queued saves and current unsaved changes only when all sent writes have a known outcome."
     : "Do you want to save your changes?");
-  let applyingAcknowledgement = false, mounted = false;
+  let applyingAcknowledgement = false, mounted = false, draftWriteFailed = false;
   let releaseChanges = null, externalRead, pendingVaultEntry = null, pendingVaultReset = false;
   let vaultRefreshPending = false;
   let contentChangedTimeout = null, titleFollowTimer = null;
@@ -221,7 +223,10 @@ export function createNoteController({
     invalid: message => notify(message, "Invalid", "error"),
     held: () => notify("This Save was captured and held. The queue is paused; no retry or resume was performed.", "Save held", "error"),
     failed: noteSaveFailure,
-    draftFailed: error => notify(`Could not update local draft storage: ${error.message ?? error}. Server Save is still available.`, "Local draft unavailable", "warn"),
+    draftFailed: error => {
+      draftWriteFailed = true;
+      notify(`Could not update local draft storage: ${error.message ?? error}. Server Save is still available.`, "Local draft unavailable", "warn");
+    },
   });
 
   function registerEditor(port) {
@@ -234,7 +239,7 @@ export function createNoteController({
     return editor ? editor.getMarkdown() : editorInitialValue.value;
   }
   function setEditorMode(mode, writeUrl = true) {
-    if (mode === editorMode.value) return;
+    if (editorReadOnly.value || mode === editorMode.value) return;
     urlSync.clearCaretSyncTimer();
     if (editorMode.value === "preview") preview.cancel();
     editorInitialValue.value = currentBuffer();
@@ -246,7 +251,7 @@ export function createNoteController({
     if (mode === "preview") schedulePreviewRefresh();
   }
   function onEditorInput() {
-    if (applyingAcknowledgement) return;
+    if (applyingAcknowledgement || editorReadOnly.value) return;
     contentRevision.value++;
     saveOwner.observeBuffer();
     refreshDirtyState(); startContentChangedTimeout(); schedulePreviewRefresh(); scheduleTitleFollow(); publishTitle();
@@ -254,10 +259,10 @@ export function createNoteController({
   function schedulePreviewRefresh() {
     preview.schedule({ isActive: () => editorMode.value === "preview", getBuffer: () => editorInitialValue.value });
   }
-  function onSourceSelection(line) { editorLine.value = line; urlSync.scheduleCaretSync(); }
+  function onSourceSelection(line) { if (!editorReadOnly.value) { editorLine.value = line; urlSync.scheduleCaretSync(); } }
 
   function init() {
-    if (lifetime.disposed || !canRead()) return;
+    if (lifetime.disposed || editorReadOnly.value || !canRead()) return;
     if (noteScope.value !== sessionKey() && (editMode.value || queueState.value.unresolved)) return;
     noteScope.value = sessionKey();
     if (urlSync.consumeAcknowledgedResource(getContext().path, saveOwner.queueState()?.sessionId)) return;
@@ -290,7 +295,7 @@ export function createNoteController({
       editHandler(); loadStatus.value = "loaded"; publishTitle();
     });
   }
-  function toggleEditModeHandler() { if (editMode.value) closeHandler(); else editHandler(true); }
+  function toggleEditModeHandler() { if (!editorReadOnly.value) { if (editMode.value) closeHandler(); else editHandler(true); } }
   function editHandler(pushUrl = false) {
     if (!canModify.value) return;
     pendingPush = pushUrl;
@@ -304,6 +309,7 @@ export function createNoteController({
     pendingEditorMode = target.mode; pendingInitialLine = target.line; editHandler();
   }
   async function gateNavigation(to) {
+    if (editorReadOnly.value) return false;
     const saveState = saveOwner.queueState();
     const decide = () => decideNavigation({ ...urlSync.state(), ownerId,
       sessionId: saveState?.sessionId, activeSubmissionId: saveState?.active?.submissionId,
@@ -388,6 +394,7 @@ export function createNoteController({
     publishFact(TOPICS.NOTE_EDIT_START, { path: note.value.path }); urlSync.writeCurrentFragment(push);
   }
   function syncTitle() {
+    if (editorReadOnly.value) return;
     pathRevision.value++; newPath.value = joinNotePath(editFolder.value, editBasename.value); refreshDirtyState();
   }
   function publishTitle() {
@@ -405,7 +412,7 @@ export function createNoteController({
     }, 300);
   }
   function onTitleInput() { titleTouched.value = true; syncTitle(); }
-  function applyRename() { return !editMode.value || saveOwner.rename(); }
+  function applyRename() { return !editorReadOnly.value && (!editMode.value || saveOwner.rename()); }
   function getInitialEditorValue() { const draftContent = loadDraft(); return draftContent !== null ? draftContent : note.value.content ?? ""; }
   let deleteIntent = null;
   function captureDeletion() {
@@ -435,6 +442,7 @@ export function createNoteController({
     }
   }
   function saveHandler(close = false) {
+    if (editorReadOnly.value) return null;
     if (!close) return saveOwner.save(deletedElsewhere);
     return saveAndClose();
   }
@@ -450,7 +458,7 @@ export function createNoteController({
   }
   function refreshDirtyState() {
     const dirty = isDirty(), becameClean = unsavedChanges.value && !dirty;
-    unsavedChanges.value = dirty; setUnload(dirty);
+    unsavedChanges.value = dirty; setUnload(dirty && (!editorReadOnly.value || draftWriteFailed));
     const fact = { path: newPath.value ?? note.value.path, revision: contentRevision.value,
        editing: editMode.value, unsaved: dirty, canSave: canModify.value && editMode.value && !notePathError(newPath.value) && queueState.value.status !== "paused" && !queueState.value.rebaseConflict };
     if (!lastEditState || Object.keys(fact).some(key => fact[key] !== lastEditState[key])) {
@@ -465,7 +473,7 @@ export function createNoteController({
   function noteSaveFailure(error) { showNoteError(error, noteSaveError(error, queueState.value.failure)); }
   function showNoteError(error, mapped) { if (mapped) notify(mapped.message, mapped.title, "error"); else failed(error); }
   async function closeHandler() {
-    if (!await resolveOwnedWork()) return;
+    if (editorReadOnly.value || !await resolveOwnedWork() || editorReadOnly.value) return;
     if (isNewNote.value) { exitEditState(); router.push({ name: "home" }); return; }
     exitEditState();
     if (getLocation().hash === "") return;
@@ -504,7 +512,9 @@ export function createNoteController({
   }
   function contentChangedHandler() {
     if (isDirty()) {
+      if (editorReadOnly.value) return;
       unsavedChanges.value = true; setUnload(true);
+      draftWriteFailed = false;
       saveOwner.persistDraft();
     } else { unsavedChanges.value = false; setUnload(false); (drafts.clearClean ?? clearDraft)(); }
   }
@@ -625,7 +635,7 @@ export function createNoteController({
   function captureEditorForRemount() { if (editMode.value && editorMode.value === "wysiwyg" && editor) editorInitialValue.value = currentBuffer(); }
   function dispose() {
     lifetime.dispose();
-    stopIdentity();
+    stopIdentity(); stopReload();
     vaultRefreshPending = false;
     if (editMode.value) { editMode.value = false; refreshDirtyState(); }
     clearEditTimers();
@@ -645,8 +655,16 @@ export function createNoteController({
     }
     refreshDirtyState();
   }, { flush: "sync" });
+  const stopReload = watch(editorReadOnly, retired => {
+    if (!retired) return;
+    clearEditTimers();
+    saveOwner.revokeRenamePrompt();
+    isSaveChangesModalVisible.value = isDeleteModalVisible.value = isDraftModalVisible.value = false;
+    if (pendingSessionDecision) { pendingSessionDecision("cancel"); pendingSessionDecision = null; }
+    refreshDirtyState();
+  }, { flush: "sync" });
   const state = readonly(reactive({
-    canModify, isNewNote, editMode, isSaveChangesModalVisible, isDeleteModalVisible, isDraftModalVisible,
+    canModify, editorReadOnly, isNewNote, editMode, isSaveChangesModalVisible, isDeleteModalVisible, isDraftModalVisible,
     isNoteNotFound, loadStatus, note, editBasename, editFolder, folderDatalistOptions,
     noteDirName, noteBasename, noteDirBreadcrumbs, renameAssetsModalVisible, renameRefs, renamePromptIdentity,
     lastMovedFiles, lastRenamedFiles, rewriteScanLink, editorMode, editorInitialValue, editorInitialLine, viewLine,

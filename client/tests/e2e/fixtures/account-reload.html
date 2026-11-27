@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Account reload fixture</title>
+<link href="../../../style.css" rel="stylesheet">
+<div id="test-app"></div>
+<script type="module">
+  import { createApp } from "vue";
+  import PrimeVue from "primevue/config";
+  import ToastService from "primevue/toastservice";
+  import Fixture from "./AccountReloadFixture.vue";
+  createApp(Fixture).use(PrimeVue, { unstyled: true }).use(ToastService).mount("#test-app");
+</script>
+</html>

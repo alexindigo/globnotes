@@ -24,7 +24,7 @@ export const TERMINAL_STATUSES = new Set([400, 401, 403, 404, 405, 410, 501]);
 export function createVaultChanges({ open = options => openVaultChanges(options), publish: emit = publish,
   // Resolved at call time, so the page's current timer implementation applies.
   setTimer = (fn, ms) => setTimeout(fn, ms), clearTimer = id => clearTimeout(id), now = () => Date.now(),
-  lifetime = createConnectionLifetime({ setTimer, clearTimer }), sessionKey, captureSession } = {}) {
+  lifetime = createConnectionLifetime({ setTimer, clearTimer }), sessionKey } = {}) {
   let owners = 0, seq = 0, attempts = 0, polling = false, pollingSince = 0;
   let pageActive = lifetime.state().active;
   let timer = null, connection = null, connected = false, disposed = false, disposal = null;
@@ -55,7 +55,6 @@ export function createVaultChanges({ open = options => openVaultChanges(options)
     if (!continuePoll) revisions.clear();
     let openedAt = null;
     const abort = new AbortController();
-    const session = captureSession?.() ?? (() => true);
     let current;
     // Every non-terminal outcome ends here: one timer, a bounded delay.
     const reconnect = reason => {
@@ -127,7 +126,9 @@ export function createVaultChanges({ open = options => openVaultChanges(options)
       },
     });
     connection = operationOwner;
-    current = bindContext(() => live() && session(), () => cursorOwner, () => connection);
+    // The cursor lifetime is installed before dialing; the transport owns any
+    // independent credential fence. No callback can replace a pending slot.
+    current = bindContext(live, () => cursorOwner, () => connection);
     const operation = operationOwner.operation("live", current);
     try {
       await operationOwner.dispatch(operation, { since: seq, poll: mode === "poll" });

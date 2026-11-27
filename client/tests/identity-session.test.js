@@ -15,6 +15,7 @@ import { createSearchResults } from "../searchResults.js";
 import { createIdentityPluginRuntime } from "../pluginRuntime.js";
 import { createVaultChanges } from "../vaultChanges.js";
 import { createNoteSaveOwner } from "../noteSaveOwner.js";
+import { createNoteController } from "../noteController.js";
 import { createConflictInbox } from "../conflictInbox.js";
 import { canCreateNote } from "../noteCreation.js";
 import { registerSessionParticipant, resolveParticipants } from "../sessionActions.js";
@@ -26,22 +27,22 @@ afterEach(async () => {
   localStorage.clear(); sessionStorage.clear();
 });
 const projection = (account = "alice", level = "view", revision = 1) => ({
-  principal: account ? { kind: "account", id: account } : { kind: "guest" }, accountId: account,
+  principal: account ? { kind: "account", id: account, login: account } : { kind: "guest" }, accountId: account,
   sessionGeneration: account ? `session-${account}` : "guest", vaultId: level === "none" ? null : "vault-one", authorityRevision: revision,
   capabilities: { canRead: level !== "none", canEdit: ["edit", "admin"].includes(level), canManageVault: level === "admin", canManageOwnAccount: !!account, canCreateVault: !!account },
   setupRequired: false, brand: { name: "Fixture" },
 });
 const controlled = (label, owner) => ({ label, owner: () => owner, progress: { kind: "controlled", clock: "external" } });
-function app({ resolve = vi.fn(async () => "proceed"), transport } = {}) {
-  const current = ref(projection("alice", "edit")), events = [];
-  const tokens = createIdentityTokenStorage({ prefix: "/one", setCookie() {} }); tokens.storeToken("old.jwt", true);
+function app({ resolve = vi.fn(async () => "proceed"), transport, account = "alice", reloadPage = vi.fn(), storageEvents } = {}) {
+  const current = ref(projection(account, "edit")), events = [];
+  const tokens = createIdentityTokenStorage({ prefix: "/one", storageEvents, setCookie() {} }); tokens.storeToken("old.jwt", true);
   const io = transport ?? { getConfig: vi.fn(async () => projection(null)), getToken: vi.fn(async () => "fresh.jwt") };
   const session = createIdentityAppSession({ config: () => current.value, setConfig: value => { current.value = value; events.push("config"); }, tokens, transport: io, resolve,
     startRuntime: key => events.push(["runtime", key]), stopRuntime: () => events.push("stop"), setChangesSession: key => events.push(["changes", key]),
-    clearBrowseData: () => events.push("clear-browse"), refreshNotes: () => events.push("notes"), applyBrand() {}, navigate: target => events.push(target.name),
+    clearBrowseData: () => events.push("clear-browse"), refreshNotes: () => events.push("notes"), applyBrand() {}, navigate: target => events.push(target.name), reloadPage,
   });
   cleanups.push(() => session.dispose()); session.adopt(current.value);
-  return { session, current, tokens, io, events, resolve };
+  return { session, current, tokens, io, events, resolve, reloadPage };
 }
 function flow(f, overrides = {}) {
   const adapters = { session: f.session, credentials: () => ({ username: "bob", password: "password", totp: "123456", rememberMe: true }),
@@ -49,6 +50,88 @@ function flow(f, overrides = {}) {
   const login = createIdentityLoginFlow(adapters); cleanups.push(() => login.dispose());
   return { login, ...adapters };
 }
+
+it.each(["this tab", "another tab"])("a different account in %s freezes the old note until explicit reload", async source => {
+  const storageEvents = { addEventListener: vi.fn(), removeEventListener: vi.fn() };
+  const f = app({ storageEvents, transport: { getToken: async () => "bob.jwt", getConfig: async () => projection("bob", "edit") } });
+  const initial = f.current.value;
+  const makeDrafts = identity => createIdentityNoteDraftStore({ prefix: "/one", identity, tokens: f.tokens });
+  const drafts = makeDrafts(() => f.current.value);
+  let buffer = "base", hold;
+  const update = vi.fn(async () => { await hold(); return { path: "Note", content: "old receipt" }; });
+  const note = createNoteController({ getContext: () => ({ ...f.current.value, path: "Note", query: {} }),
+    sessionKey: f.session.key, captureSession: f.session.capture, reloadRequired: () => f.session.state.reloadRequired,
+    router: { push: vi.fn(), replace: vi.fn(), options: { history: { base: "" } }, currentRoute: { value: { fullPath: "/Note#source" } } },
+    getLocation: () => ({ pathname: "/Note", search: "", hash: "#source" }),
+    drafts, read: async () => ({ path: "Note", content: "base" }), saveOwnerFactory: adapters => createNoteSaveOwner({ ...adapters, update }),
+    acquireChanges: () => () => {}, setUnload: vi.fn(), subscribe: () => () => {}, publish: vi.fn(),
+  });
+  cleanups.push(note.dispose);
+  await note.mount(); note.setEditMode();
+  note.registerEditor({ getMarkdown: () => buffer, applyAcknowledgement: value => { buffer = value; } });
+  buffer = "submitted edit"; note.onEditorInput();
+  await heldOperation(controlled("old note wire", note), boundary => { hold = boundary; return note.saveHandler().completion; }, async work => {
+    await work.reached();
+    buffer = "newer unsaved edit"; note.onEditorInput();
+    f.events.length = 0;
+    if (source === "this tab") {
+      const login = flow(f);
+      await login.login.logIn();
+      expect(login.navigate).not.toHaveBeenCalled();
+    } else {
+      const { key } = f.tokens.scope;
+      localStorage.setItem(key, "bob.jwt");
+      const [[, receive]] = storageEvents.addEventListener.mock.calls;
+      receive({ storageArea: localStorage, key, newValue: "bob.jwt" });
+      expect(f.session.key()).toBeNull();
+      await f.session.settle();
+    }
+    const notice = f.session.state.reloadRequired;
+    expect(notice).toEqual({ detail: "You're now signed in as bob. Reload to continue.", actionLabel: "Reload", action: expect.any(Function) });
+    expect(f.current.value).toEqual(initial);
+    expect(f.tokens.getStoredToken()).toBe("bob.jwt");
+    expect([note.state.editMode, note.state.editorReadOnly, note.state.canModify, note.currentBuffer()]).toEqual([true, true, false, "newer unsaved edit"]);
+    expect(note.saveHandler()).toBeNull();
+    expect(makeDrafts(() => initial).load("Note", 0)).toBe("newer unsaved edit");
+    expect(makeDrafts(() => projection("bob")).load("Note", 0)).toBeNull();
+    expect(await work.result()).toMatchObject({ result: { path: "Note", content: "old receipt" } });
+    expect([note.state.note.content, note.currentBuffer(), update.mock.calls, f.events.filter(event => ["notes", "config"].includes(event))])
+      .toEqual(["base", "newer unsaved edit", [["Note", "Note", "submitted edit", "none", "base"]], []]);
+    expect(f.reloadPage).not.toHaveBeenCalled();
+    expect(await f.session.refresh()).toBe(false);
+    notice.action();
+    expect(f.reloadPage).toHaveBeenCalledExactlyOnceWith();
+  });
+});
+
+it("accepting a renewed credential for the same account does not require reload", async () => {
+  const f = app({ transport: { getToken: async () => "alice-renewed.jwt",
+    getConfig: async () => ({ ...projection("alice", "edit"), sessionGeneration: "renewed" }) } });
+  const authenticated = vi.fn(), fresh = flow(f, { authenticated });
+  await fresh.login.logIn();
+  expect(authenticated).toHaveBeenCalledExactlyOnceWith();
+  expect([f.current.value.sessionGeneration, f.session.state.reloadRequired, f.reloadPage.mock.calls]).toEqual(["renewed", null, []]);
+});
+
+it("a replacement installed while the logout clears storage owns the next transition", async () => {
+  let token = "original", session, clearing;
+  const tokens = { getStoredToken: () => token, storeToken(value) { token = value; }, clearStoredToken() {
+    token = null;
+    if (clearing) return;
+    clearing = true;
+    session.acceptToken("renewed", false);
+  } };
+  const current = ref(projection()), navigate = vi.fn(), getConfig = vi.fn(async () => projection(null));
+  session = createIdentityAppSession({ config: () => current.value, setConfig: value => { current.value = value; },
+    tokens, transport: { getConfig }, resolve: async () => "proceed", navigate, applyBrand() {}, stopRuntime() {},
+  });
+  cleanups.push(() => session.dispose()); session.adopt(current.value);
+  expect(await session.logout()).toBe(false);
+  expect([token, navigate.mock.calls, getConfig.mock.calls]).toEqual(["renewed", [], []]);
+  expect(await session.logout()).toBe(true);
+  await session.settle();
+  expect([token, navigate.mock.calls, current.value.accountId]).toEqual([null, [[{ name: "login" }]], null]);
+});
 
 it("a retired transport admits only credential recovery even while the old token is stored", async () => {
   const get = vi.fn(async () => ({ data: projection() })), request = vi.fn(async () => ({ data: {} }));
@@ -68,9 +151,9 @@ it("retaining a 403's dirty work cannot retire a replacement installed by the pa
     tokens: { getStoredToken: () => "opaque" }, http: { get }, applyBrand() {} });
   cleanups.push(() => session.dispose()); session.adopt(current.value);
   cleanups.push(registerSessionParticipant("replacement", { hasUnsavedChanges: () => true,
-    retainForAuthentication() { session.adopt(projection("bob")); } }));
+    retainForAuthentication() { session.adopt(projection("alice", "view", 2)); } }));
   await expect(session.transport.read("notes")).rejects.toBe(refusal);
-  expect([session.state.valid, current.value.accountId, get.mock.calls.map(([path]) => path)]).toEqual([true, "bob", ["notes"]]);
+  expect([session.state.valid, current.value.authorityRevision, get.mock.calls.map(([path]) => path)]).toEqual([true, 2, ["notes"]]);
 });
 
 it("reports the initial config installation error from the adoption that owns it", async () => {
@@ -95,10 +178,10 @@ it("navigates and completes the shared logout before anonymous config answers", 
     await work.reached();
     expect(f.events.filter(value => value === "login")).toEqual(["login"]);
     expect(await waitUntil(async () => done(await logout), { label: "logout completion while recovery is held" })).toBe(true);
-    f.session.acceptToken("bob.jwt", false); f.session.adopt(projection("bob"));
+    f.session.acceptToken("alice.jwt", false); f.session.adopt(projection("alice"));
     await work.result();
   });
-  expect([f.current.value.accountId, f.tokens.getStoredToken()]).toEqual(["bob", "bob.jwt"]);
+  expect([f.current.value.accountId, f.tokens.getStoredToken()]).toEqual(["alice", "alice.jwt"]);
 }, 3 * READINESS_MS);
 
 it("awaits and reports an asynchronous accepted login callback rejection", async () => {
@@ -108,7 +191,7 @@ it("awaits and reports an asynchronous accepted login callback rejection", async
   // Keep the test-owned promise observed even in the broken flow.
   callback.catch(() => {});
   const failure = Error("navigation rejected"), reportError = vi.fn();
-  const f = app({ transport: { getToken: async () => "bob.jwt", getConfig: async () => projection("bob") } });
+  const f = app({ account: null, transport: { getToken: async () => "bob.jwt", getConfig: async () => projection("bob") } });
   const login = flow(f, { reportError, authenticated: () => { resolveEntered(); return callback; } });
   const completing = login.login.logIn();
   await entered;
@@ -155,9 +238,9 @@ it("invalidation fences delayed config without deleting or resolving dirty parti
   const f = app({ transport: { getConfig: async () => { await hold(); return projection("alice", "admin"); } } });
   const asked = vi.fn(); cleanups.push(registerSessionParticipant("identity-note", { hasUnsavedChanges: () => true, requestDecision: asked }));
   await heldOperation(controlled("old config", f.session), boundary => { hold = boundary; return f.session.refresh(); }, async work => {
-    await work.reached(); f.session.invalidate(); f.session.adopt(projection("bob", "none"));
+    await work.reached(); f.session.invalidate(); f.session.adopt(projection("alice", "none"));
     expect(await work.result()).toBe(false);
-    expect(f.current.value).toEqual(projection("bob", "none")); expect(asked).not.toHaveBeenCalled(); expect(f.resolve).not.toHaveBeenCalled();
+    expect(f.current.value).toEqual(projection("alice", "none")); expect(asked).not.toHaveBeenCalled(); expect(f.resolve).not.toHaveBeenCalled();
   });
 });
 it.each(["cancel", "discard", "save"])("logout %s settles original participants before browser-only credential retirement", async choice => {
@@ -170,7 +253,7 @@ it.each(["cancel", "discard", "save"])("logout %s settles original participants 
   expect(f.events.filter(value => value === "login")).toEqual(choice === "cancel" ? [] : ["login"]);
 });
 it("public vaults retain explicit named sign-in and Cancel keeps credentials and route", async () => {
-  const f = app({ resolve: vi.fn(async () => "cancel") }), login = flow(f);
+  const f = app({ account: null, resolve: vi.fn(async () => "cancel") }), login = flow(f);
   login.login.init("none"); await login.login.logIn();
   expect(f.io.getToken).not.toHaveBeenCalled(); expect(login.clearCredentials).not.toHaveBeenCalled(); expect(f.tokens.getStoredToken()).toBe("old.jwt");
   expect(await createIdentityRouteGuard({ status: () => projection(null) })({ name: "login" })).toBe(true);
@@ -186,7 +269,7 @@ it("a token response from a retired owner is not persisted", async () => {
 });
 it("sign-in waits for participants before proof, then adopts the new safe session", async () => {
   let hold; const events = [];
-  const f = app({ resolve: async () => { events.push("resolve"); await hold(); return "proceed"; }, transport: {
+  const f = app({ account: null, resolve: async () => { events.push("resolve"); await hold(); return "proceed"; }, transport: {
     getToken: vi.fn(async () => { events.push("prove"); return "bob.jwt"; }), getConfig: async () => projection("bob", "none") } }), login = flow(f);
   await heldOperation(controlled("sign-in departure", f.session), boundary => { hold = boundary; return login.login.logIn(); }, async work => {
     await work.reached(); expect(events).toEqual(["resolve"]); expect(f.tokens.getStoredToken()).toBe("old.jwt"); await work.result();
@@ -194,13 +277,13 @@ it("sign-in waits for participants before proof, then adopts the new safe sessio
     expect(login.navigate).toHaveBeenCalledExactlyOnceWith({ name: "home" });
   });
 });
-it("a logout's delayed anonymous config cannot clear or navigate over Bob's replacement sign-in", async () => {
+it("a logout's delayed anonymous config cannot clear or navigate over a replacement sign-in", async () => {
   let hold; const f = app({ transport: { getConfig: async () => { await hold(); return projection(null); } } });
   await heldOperation(controlled("anonymous logout config", f.session), boundary => { hold = boundary; return f.session.logout(); }, async work => {
     await work.reached(); expect(f.tokens.getStoredToken()).toBeNull(); expect(f.events.filter(value => value === "login")).toEqual(["login"]);
-    f.session.acceptToken("bob.jwt", false); f.session.adopt(projection("bob", "none"));
+    f.session.acceptToken("alice.jwt", false); f.session.adopt(projection("alice", "none"));
     expect(await work.result()).toBe(true); await f.session.settle();
-    expect(f.current.value).toEqual(projection("bob", "none")); expect(f.tokens.getStoredToken()).toBe("bob.jwt"); expect(f.events.filter(value => value === "login")).toEqual(["login"]);
+    expect(f.current.value).toEqual(projection("alice", "none")); expect(f.tokens.getStoredToken()).toBe("alice.jwt"); expect(f.events.filter(value => value === "login")).toEqual(["login"]);
   });
 });
 it("logout keeps its shared completion and reaches ordinary sign-in when the anonymous refresh fails", async () => {
@@ -335,7 +418,7 @@ it("a late successful save keeps its known-committed outcome without applying it
   });
 });
 
-it("app adoption drives the real scoped index while a previous read is still pending", async () => {
+it("the app stops the real scoped index instead of adopting a different account", async () => {
   let session, hold, calls = 0;
   const current = ref(projection()), store = { notePaths: [], noteMeta: [], recentlyOpened: [] };
   const index = createIdentityNoteIndex({ store, sessionKey: () => session.key(), canRead: () => current.value.capabilities.canRead,
@@ -345,9 +428,9 @@ it("app adoption drives the real scoped index while a previous read is still pen
     setBrowseSession: index.setSession, refreshNotes: () => { reading = index.refresh(); } });
   cleanups.push(() => session.dispose(), () => index.dispose());
   await heldOperation(controlled("app index read", index), boundary => { hold = boundary; session.adopt(current.value); return reading; }, async work => {
-    await work.reached(); session.adopt(projection("bob")); await reading;
-    expect(store.notePaths).toEqual(["Bob note"]); await work.result(); expect(store.notePaths).toEqual(["Bob note"]);
-    session.adopt(projection("bob", "none")); expect(store).toEqual({ notePaths: [], noteMeta: [], recentlyOpened: [] });
+    await work.reached(); session.adopt(projection("bob"));
+    expect(store.notePaths).toEqual([]); await work.result(); expect(store.notePaths).toEqual([]);
+    expect(calls).toBe(1); expect(session.adopt(projection("alice"))).toBe(false);
   });
 });
 it("View conflict browsing rejects a delayed reply after becoming None", async () => {
@@ -393,7 +476,7 @@ it("replacement credentials keep old reads in original-work settlement and dispo
     expect(await work.result()).toBe(false);
     expect((await settlement).map(result => result.status)).toEqual(["rejected"]);
     expect((await disposal).errors).toEqual([]);
-    expect(f.current.value).toEqual(projection("bob")); expect(f.tokens.getStoredToken()).toBe("bob.jwt");
+    expect(f.current.value).toEqual(projection("alice", "edit")); expect(f.tokens.getStoredToken()).toBe("bob.jwt");
   });
 });
 it("a reentrant projection consumer cannot start stale runtimes after replacement", () => {

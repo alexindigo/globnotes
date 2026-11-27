@@ -17,11 +17,13 @@ import { createSessionContext } from "./sessionContext.js";
 export function createIdentityAppSession({ config, setConfig, tokens = createIdentityTokenStorage(),
   transport, http, resolve = resolveParticipants, startRuntime = () => {}, stopRuntime = stopPluginRuntime,
   setChangesSession = () => {}, setBrowseSession = () => {}, clearBrowseData = () => {}, refreshNotes = () => {},
-  applyBrand = applyBrandToDocument, navigate = () => {}, failed = () => {} } = {}) {
-  const ready = ref(false), valid = ref(false);
-  let latestRead, transitionPending = null;
+  applyBrand = applyBrandToDocument, navigate = () => {}, failed = () => {},
+  reloadPage = () => window.location.reload() } = {}) {
+  const ready = ref(false), valid = ref(false), reloadRequired = ref(null);
+  let latestRead, transitionPending = null, activeAccount = null, locking = false;
   const key = () => valid.value ? identitySessionKey(config()) : null;
-  const context = createSessionContext({ key, tokens });
+  const context = createSessionContext({ key, tokens, isOpen: () => !reloadRequired.value });
+  const unavailable = () => context.disposed || locking || !!reloadRequired.value;
   const { capture } = context;
   const io = transport ?? createIdentityApi({ http, context, onAuthorityFailure(error, current) {
     retainUnsavedWork();
@@ -48,14 +50,28 @@ export function createIdentityAppSession({ config, setConfig, tokens = createIde
     clearBrowseData(); return current();
   }
   function adopt(fresh, onTransition = () => {}) {
-    if (context.disposed) return false;
+    if (unavailable()) return false;
     if (!fresh?.capabilities || !fresh.principal || !fresh.sessionGeneration) throw new Error("Invalid identity projection.");
+    const account = fresh.principal.kind === "account" ? fresh.accountId ?? fresh.principal.id : null;
+    if (activeAccount !== null && account !== null && account !== activeAccount) {
+      // The next account never receives a live projection in this document.
+      // Flush while the outgoing editor still owns its original storage scope.
+      locking = true;
+      try { if (valid.value) retainUnsavedWork(); retire(); }
+      finally {
+        const login = fresh.principal.login;
+        reloadRequired.value = Object.freeze({ detail: `You're now signed in as ${login}. Reload to continue.`, actionLabel: "Reload", action: reload });
+        locking = false;
+      }
+      return false;
+    }
     const changed = !valid.value || identitySessionKey(fresh) !== key();
     let adopting = context.captureTransition();
     if (changed && !retire(current => { adopting = current; onTransition(current); })) return false;
     setConfig(fresh); if (!adopting()) return false;
     valid.value = true; if (!adopting()) return false;
     ready.value = true; if (!adopting()) return false;
+    activeAccount = account;
     if (fresh.capabilities.canRead) {
       applyBrand(fresh.brand); if (!adopting()) return false;
       if (changed) {
@@ -68,9 +84,9 @@ export function createIdentityAppSession({ config, setConfig, tokens = createIde
     return adopting();
   }
   async function refresh(onAccepted) {
-    if (context.disposed) return false;
+    if (unavailable()) return false;
     latestRead = {};
-    const current = capture().bind(() => latestRead);
+    const current = context.captureTransition().bind(() => latestRead);
     const owner = attempt, operation = owner.operation("recovery", current);
     let failureCurrent = current;
     try {
@@ -89,39 +105,53 @@ export function createIdentityAppSession({ config, setConfig, tokens = createIde
     } finally { await owner.release(operation); }
   }
   async function beforeSignIn() {
+    if (unavailable()) return false;
+    // A named account can obtain new proof without asking the old editor to
+    // save/discard; its actual account id is verified by the config response.
+    if (activeAccount !== null) return true;
     const current = capture(), owner = attempt, operation = owner.operation("live", current);
     try { return (await owner.dispatch(operation, "login")).value === "proceed" && current(); }
     finally { await owner.release(operation); }
   }
-  function acceptToken(token, persist) {
-    if (context.disposed || !retire()) return false;
-    context.advanceCredential();
-    tokens.storeToken(token, persist);
-    return true;
+  function replaceCredential(write) {
+    if (unavailable()) return false;
+    const current = context.captureTransition();
+    if (valid.value) retainUnsavedWork();
+    if (!current() || !retire()) return false;
+    const installing = context.advanceCredential();
+    return write() !== false && installing();
   }
+  const acceptToken = (token, persist) => replaceCredential(() => tokens.storeToken(token, persist));
+  const stopSharedSignIn = tokens.subscribeSharedSignIn?.(token => {
+    if (replaceCredential(() => tokens.acceptSharedSignIn(token))) void refresh();
+  });
   function logout() {
-    if (context.disposed) return Promise.resolve(false);
-    if (transitionPending) return transitionPending;
+    if (unavailable()) return Promise.resolve(false);
+    if (transitionPending?.current()) return transitionPending.pending;
     const current = capture(), owner = attempt, operation = owner.operation("retained", current);
-    transitionPending = (async () => {
+    const transition = { current };
+    transitionPending = transition;
+    transition.pending = Promise.resolve().then(async () => {
       try {
         const decision = await owner.dispatch(operation, "logout");
         if (decision.value !== "proceed" || !current() || !retire()) return false;
-        context.advanceCredential(); tokens.clearStoredToken();
-        const signedOut = context.captureCredential();
+        const clearing = context.advanceCredential();
+        const signedOut = transition.current = () => clearing() && !tokens.getStoredToken();
+        tokens.clearStoredToken();
         const delivery = { target: { name: "login" } };
         if (!owner.deliver(operation, "navigate", delivery, signedOut)) return false;
         if (signedOut()) void refresh().catch(error => { if (signedOut()) failed(error); });
         await delivery.navigation;
         return true;
       } finally { await owner.release(operation); }
-    })().finally(() => { transitionPending = null; });
-    return transitionPending;
+    }).finally(() => { if (transitionPending === transition) transitionPending = null; });
+    return transition.pending;
   }
-  return Object.freeze({ state: readonly(reactive({ ready, valid })), key, capture,
-    load: refresh, refresh, adopt, invalidate: retire, beforeSignIn, acceptToken, logout, transport: io, tokens,
+  function reload() { if (reloadRequired.value) reloadPage(); }
+  return Object.freeze({ state: readonly(reactive({ ready, valid, reloadRequired })), key, capture,
+    load: refresh, refresh, adopt, invalidate: () => !unavailable() && retire(), beforeSignIn, acceptToken, logout, transport: io, tokens,
     hasWork: () => attempt.hasWork(), settle: () => attempt.settle(),
-    dispose() { if (!context.disposed) { context.dispose(); retire(undefined, true); } return attempt.dispose(); },
+    dispose() { if (!context.disposed) { stopSharedSignIn?.(); context.dispose(); retire(undefined, true); } return attempt.dispose(); },
   });
 }
 

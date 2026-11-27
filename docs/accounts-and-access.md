@@ -320,6 +320,12 @@ drafts remain with their original owner. Browsing caches, search results and
 draft storage are identity-qualified. Recovery reads outlive retired stream
 access, but cannot restore another credential attempt.
 
+After a different named account signs in, including through a shared remembered
+sign-in in another tab, an existing document retains the old account's drafts
+and retires its live access. It does not install the new account's view until
+the user presses Reload in the persistent toast. Renewing the same account
+keeps the document in place; signing out still uses the guest handoff.
+
 Remembered and session-only note drafts recover the newest surviving draft for
 the same account, vault, and note. Acknowledging a save or explicitly discarding
 a draft retires older drafts for that note in both stores. Closing a tab with

@@ -55,7 +55,7 @@ describe("native suite child result ownership", () => {
     }
   });
   it("uses the canonical complete fixture inventory for native scheduling and CLI admission", () => {
-    expect(SELECTION).toHaveLength(128);
+    expect(SELECTION).toHaveLength(129);
     for (const [driver, cases] of Object.entries(MATRIX_CASES)) {
       const selection = nativeMatrixSelection(driver);
       expect(selection[0]).toEqual([driver]);

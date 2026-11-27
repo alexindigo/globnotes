@@ -66,6 +66,7 @@
             <TextInput
               v-show="editMode"
               v-model.trim="editBasename"
+              :readonly="editorReadOnly"
               @input="onTitleInput"
               @keydown.enter="controller.applyRename()"
               @blur="controller.applyRename()"
@@ -91,6 +92,7 @@
           <div v-show="editMode" class="flex pt-1">
             <TextInput
               v-model="editFolder"
+              :readonly="editorReadOnly"
               @input="syncTitle"
               @keydown.enter="controller.applyRename()"
               @blur="controller.applyRename()"
@@ -122,6 +124,7 @@
           <CustomButton
             v-show="editMode"
             label="Save"
+            :disabled="editorReadOnly"
             :iconPath="saving ? tabLoader2 : tabSave"
             :iconClass="[unsavedChanges ? 'text-theme-brand' : '', saving ? 'animate-spin motion-reduce:animate-none' : '']"
             :aria-busy="saving ? 'true' : 'false'"
@@ -180,7 +183,7 @@
         :line="viewLine"
         class="toast-viewer pb-4"
       />
-      <div v-if="editMode" class="flex h-full min-h-0 flex-col">
+      <div v-if="editMode" class="flex h-full min-h-0 flex-col" :inert="editorReadOnly || undefined" :aria-readonly="editorReadOnly || undefined">
         <div class="mb-2 flex gap-2 text-sm">
           <button
             type="button"
@@ -299,7 +302,7 @@ const controller = createNoteController({
     authType: globalStore.config.authType, notePaths: globalStore.notePaths }),
 });
 const {
-  canModify, isNewNote, editMode, isNoteNotFound, note, folderDatalistOptions,
+  canModify, editorReadOnly, isNewNote, editMode, isNoteNotFound, note, folderDatalistOptions,
   noteDirName, noteBasename, noteDirBreadcrumbs, renameAssetsModalVisible, renameRefs,
   renamePromptIdentity, lastMovedFiles, lastRenamedFiles, rewriteScanLink, editorMode, editorInitialValue,
   editorInitialLine, viewLine, previewHtml, unsavedChanges, saving, saveFeedback, saveChangesMessage,
