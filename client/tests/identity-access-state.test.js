@@ -81,9 +81,21 @@ it("unreadable creation outcome retains ID, rejects replay and resolves only by 
   expect(readCreation.mock.calls).toEqual([[createAccount.mock.calls[0][0].operationId, { token: "alice-token" }], [createAccount.mock.calls[0][0].operationId, { token: "alice-token" }]]); expect(createAccount).toHaveBeenCalledOnce();
 });
 it("conclusive noncommit preserves nonsecret choices, clears the password and permits an explicit renewed attempt", async () => {
-  const createAccount = vi.fn(async () => { throw Error("lost"); }), f = await fixture({ createAccount, readCreation: async operationId => ({ operationId, committed: false }) });
+  const createAccount = vi.fn(async () => { throw Error("lost"); }), f = await fixture({ createAccount, readCreation: async operationId => ({ operationId, committed: false, settled: true }) });
   await creating(f); f.controller.setField("level", "view"); await f.controller.submitDialog();
   expect(f.controller.state).toMatchObject({ login: "jordan", level: "view", temporaryPassword: "", provisioningUnknown: false }); expect(createAccount).toHaveBeenCalledOnce();
+});
+it.each(["ordinary", "self-demotion"])("a synchronous preflight failure leaves the %s draft retryable", async kind => {
+  const beforeCommit = vi.fn().mockImplementationOnce(() => { throw Error("preflight failed"); }).mockReturnValue(true);
+  const f = await fixture({ beforeCommit, confirmDeparture: () => "cancel" }), c = f.controller;
+  const id = kind === "ordinary" ? "sam" : "alice";
+  c.setLevel(id, "view");
+  expect(await c.requestCommit()).toBe(false);
+  expect([c.state.pending, c.state.canSave, c.state.grants[id], f.write.mock.calls]).toEqual([false, true, "view", []]);
+  expect(await c.resolveDeparture("close")).toBe(false);
+  expect(await c.requestCommit()).toBe(true);
+  if (kind === "self-demotion") expect(await c.confirmChange()).toBe(true);
+  expect(beforeCommit.mock.calls).toEqual([[], []]); expect(f.write).toHaveBeenCalledOnce();
 });
 it("a later writer obscuring an ACL outcome is not permission to replay", async () => {
   const f = await fixture({ write: vi.fn(async () => { throw Error("lost"); }), readStatus: async () => ({ matched: false }) });
@@ -159,6 +171,21 @@ it("a timeout keeps the original ACL wire and accepts its late committed reply w
   held.resolve({ updateId: write.mock.calls[0][0].updateId, committed: true, capabilities: { canManageVault: true } }); await f.controller.settle();
   expect(f.controller.state.unknown).toBe(false); expect(f.controller.state.view.signature).toBe("committed"); expect(write).toHaveBeenCalledOnce();
 });
+it("a failed receipt read cannot overwrite the original PUT's accepted acknowledgment", async () => {
+  vi.useFakeTimers();
+  const put = heldResponse(), receipt = heldResponse(), reading = Promise.withResolvers(), didComplete = Promise.withResolvers();
+  const write = vi.fn(() => put.promise), readStatus = vi.fn(id => { reading.resolve(id); return receipt.promise; });
+  const { controller: c } = await fixture({ write, readStatus, completed: didComplete.resolve, timeoutMs: 20 });
+  c.setLevel("sam", "view"); const attempt = c.requestCommit(); await vi.advanceTimersByTimeAsync(20);
+  expect(await attempt).toBe(false);
+  const review = c.review(), { updateId } = write.mock.calls[0][0];
+  expect(await reading.promise).toBe(updateId);
+  put.resolve({ updateId, committed: true });
+  expect(await didComplete.promise).toEqual({ updateId, committed: true });
+  receipt.reject(Error("lost review response"));
+  expect(await review).toBe(false);
+  expect(c.state).toMatchObject({ status: "Access saved.", error: "", dirty: false, unknown: false });
+});
 it.each(["acl", "create"])("%s dispatch cannot borrow a replacement identity in its queued microtask", async kind => {
   let scope = "alice"; const createAccount = vi.fn(), f = await fixture({ sessionKey: () => scope, createAccount });
   if (kind === "create") { await creating(f); const pending = f.controller.submitDialog(); scope = "bob"; await pending; }
@@ -174,6 +201,42 @@ it("a timed-out create retains its original wire and ID through two early negati
   expect(readCreation.mock.calls).toEqual([[id, { token: "alice-token" }], [id, { token: "alice-token" }]]);
   held.resolve({ operationId: id, accountId: "jordan", committed: true }); await f.controller.settle();
   expect(f.controller.state).toMatchObject({ provisioningUnknown: false, status: "Account created and added.", temporaryPassword: "" }); expect(createAccount).toHaveBeenCalledOnce(); expect(notify).toHaveBeenCalledOnce();
+});
+it("a negative receipt produced before POST admission cannot conclude noncommit after a lost wire", async () => {
+  vi.useFakeTimers();
+  const post = heldResponse(), receipt = heldResponse(), entered = Promise.withResolvers();
+  const createAccount = vi.fn(() => post.promise), notify = vi.fn();
+  const readCreation = vi.fn().mockImplementationOnce(id => { entered.resolve(id); return receipt.promise; })
+    .mockImplementationOnce(async operationId => ({ operationId, committed: true, accountId: "created" }));
+  const f = await fixture({ createAccount, readCreation, notify, timeoutMs: 20 }), c = f.controller; await creating(f);
+  const attempt = c.submitDialog(); await vi.advanceTimersByTimeAsync(20);
+  const operationId = await entered.promise;
+  post.reject(Error("POST reply lost after server commit"));
+  await vi.advanceTimersByTimeAsync(0); // Drain the rejected wire before delivering the earlier receipt.
+  receipt.resolve({ operationId, committed: false });
+  expect(await attempt).toBe(false);
+  expect(c.state).toMatchObject({ provisioningUnknown: true, temporaryPassword: "temporary", error: "The original account creation is still pending. Check its outcome again before continuing." });
+  expect(await c.submitDialog()).toBe(false);
+  expect(await c.reviewCreation()).toBe(true);
+  expect(readCreation.mock.calls).toEqual([[operationId, { token: "alice-token" }], [operationId, { token: "alice-token" }]]);
+  expect([createAccount.mock.calls.length, notify.mock.calls.length, c.state.status]).toEqual([1, 1, "Account created and added."]);
+});
+it("a late POST response cannot unlock or change a newer creation", async () => {
+  vi.useFakeTimers();
+  const first = heldResponse(), second = heldResponse(), entered = Promise.withResolvers();
+  const createAccount = vi.fn().mockReturnValueOnce(first.promise).mockImplementationOnce(request => { entered.resolve(request); return second.promise; });
+  const readCreation = vi.fn(async operationId => ({ operationId, committed: true, accountId: "first" })), notify = vi.fn();
+  const f = await fixture({ createAccount, readCreation, notify, timeoutMs: 20 }), c = f.controller;
+  await creating(f); const a = c.submitDialog(); await vi.advanceTimersByTimeAsync(20); expect(await a).toBe(true);
+  await creating(f); c.setField("login", "next"); const b = c.submitDialog(); const request = await entered.promise;
+  const firstId = createAccount.mock.calls[0][0].operationId;
+  first.resolve({ operationId: firstId, committed: true, accountId: "first" });
+  await vi.advanceTimersByTimeAsync(0); // Drain only the released POST, not B's observation deadline.
+  expect([c.state.provisioning, c.state.mutable, c.state.login]).toEqual([true, false, "next"]);
+  expect(await c.submitDialog()).toBe(false);
+  second.resolve({ operationId: request.operationId, committed: true, accountId: "second" }); expect(await b).toBe(true);
+  expect(createAccount.mock.calls.map(([input]) => [input.operationId, input.login])).toEqual([[firstId, "jordan"], [request.operationId, "next"]]);
+  expect(notify.mock.calls.map(([notice]) => notice.detail.split(" ")[0])).toEqual(["jordan", "next"]);
 });
 it("an already-resolved departure saves without recursively asking the departure owner", async () => {
   const beforeCommit = vi.fn(async () => false), f = await fixture({ beforeCommit }); f.controller.setLevel("sam", "view");

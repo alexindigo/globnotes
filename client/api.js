@@ -167,9 +167,16 @@ export const postIdentitySetup = async data => (await accountApi.post("setup", d
 export const postIdentitySetupEnrolment = async username => (await accountApi.post("setup/totp-enrolment", { username })).data;
 export const getIdentityAccess = async options => (await accountApi.get("access", accountHeaders(options))).data;
 export const putIdentityAccess = async (data, options) => (await accountApi.put("access", data, accountHeaders(options))).data;
-export const getIdentityAccessOutcome = async (updateId, options) => (await accountApi.get("auth-check", { ...accountHeaders(options), params: { accessUpdateId: updateId } })).data;
+export async function getIdentityAccessOutcome(updateId, options) {
+  const { data } = await accountApi.get("auth-check", { ...accountHeaders(options), params: { accessUpdateId: updateId } });
+  if (typeof data?.matched !== "boolean") throw Error("Missing access outcome.");
+  return data;
+}
 export const postIdentityAccount = async (data, options) => (await accountApi.post("accounts", data, accountHeaders(options))).data;
-export const getIdentityAccountOutcome = async (operationId, options) => (await accountApi.get("accounts", { ...accountHeaders(options), params: { operationId } })).data;
+export async function getIdentityAccountOutcome(operationId, options) {
+  const { data, headers } = await accountApi.get("accounts", { ...accountHeaders(options), params: { operationId } });
+  return { ...data, settled: headers["globnotes-creation-settled"] === "true" };
+}
 
 export async function getAccessSettings() { return (await api.get("access")).data; }
 export async function putAccessSettings(data) { return (await api.put("access", data)).data; }

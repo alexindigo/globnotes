@@ -899,3 +899,52 @@ Deno.test("provisioning: outcome waits for admitted hash settlement, then remain
     );
   }, { hashing: () => hold?.() });
 });
+
+Deno.test("provisioning: only a negative receipt that joined the actor's admitted request proves settlement", () => {
+  let hold: (() => Promise<void>) | undefined;
+  return identityWorkflowFixture(async (f) => {
+    const input = await request(f), before = bytes(f);
+    const read = async (response: Response) => [
+      response.status,
+      await response.json(),
+      response.headers.get("globnotes-creation-settled"),
+    ];
+    const absent = { operationId: input.operationId, committed: false };
+    assertEquals(
+      await read(await f.provisioning.reviewResponse(f.a, input.operationId)),
+      [200, absent, null],
+    );
+    const refusal = new DOMException("creation stopped", "AbortError");
+    const abort = new AbortController();
+    await heldOperation({
+      label: "recipient hash before refusal",
+      owner: () => f.provisioning,
+      progress: { kind: "controlled", clock: "external" },
+    }, (h) => {
+      hold = h;
+      return assertRejects(
+        () => f.provisioning.createAndAdd(f.a, input, abort.signal),
+        DOMException,
+        refusal.message,
+      );
+    }, async (operation) => {
+      await operation.reached();
+      hold = undefined;
+      const own = f.provisioning.reviewResponse(f.a, input.operationId);
+      const foreign = f.provisioning.reviewResponse(f.b, input.operationId);
+      assertEquals(await bounded(foreign.then(read), "foreign receipt"), [
+        200,
+        absent,
+        null,
+      ]);
+      abort.abort(refusal);
+      await operation.result();
+      assertEquals(await bounded(own.then(read), "own settled receipt"), [
+        200,
+        absent,
+        "true",
+      ]);
+    });
+    assertEquals(bytes(f), before);
+  }, { hashing: () => hold?.() });
+});

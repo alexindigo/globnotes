@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { afterEach, expect, it, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
+import { nextTick } from "vue";
 import { createIdentityAccessSettingsState } from "../accessSettingsState.js";
 import AccessSettings from "../components/settings/AccessSettings.vue";
 const active = [];
@@ -55,6 +56,14 @@ it("named and Everybody else selectors forward the selected levels, not field ke
   await wrapper.get('#access-sam').setValue(JSON.stringify('none'));
   await wrapper.get('#access-everybody').setValue(JSON.stringify('edit'));
   expect([controller.state.grants.sam, controller.state.everybody, controller.state.dirty]).toEqual(['none', 'edit', true]);
+});
+it("revocation makes the already rendered edit controls read-only", async () => {
+  const { wrapper, controller } = await render();
+  expect(wrapper.findAll("select").map(select => select.attributes("id"))).toEqual(["access-alice", "access-sam", "access-everybody"]);
+  controller.revoke(); await nextTick();
+  expect(wrapper.findAll("select")).toEqual([]);
+  expect(wrapper.findAll("button")).toEqual([]);
+  expect([controller.setLevel("sam", "none"), controller.state.grants.sam]).toEqual([false, "edit"]);
 });
 it("the dialog's level and password fields forward values to the same controller", async () => {
   const { controller } = await render(); await controller.openDialog('create');

@@ -86,16 +86,22 @@ export class AccountProvisioning {
   readonly #transaction: IdentityTransaction;
   /** Work owns its slot until settlement. Aborted callers remove only their
    * subscription, without leaving a reaction on the shared operation. */
-  readonly #pending = new Map<string, Set<() => void>>();
+  readonly #pending = new Map<
+    string,
+    { actorId: string; waiters: Set<() => void> }
+  >();
   constructor(access: VaultAccess, transaction: IdentityTransaction) {
     this.access = access;
     this.#transaction = transaction;
   }
-  #join(operationId: string, signal?: AbortSignal): Promise<void> | undefined {
+  #join(operationId: string, signal?: AbortSignal, actorId?: string) {
     signal?.throwIfAborted();
-    const waiters = this.#pending.get(operationId);
-    if (!waiters) return;
-    return new Promise((resolve, reject) => {
+    const pending = this.#pending.get(operationId);
+    if (!pending || actorId !== undefined && pending.actorId !== actorId) {
+      return;
+    }
+    const { waiters } = pending;
+    return new Promise<void>((resolve, reject) => {
       const settle = () => {
         signal?.removeEventListener("abort", abort);
         resolve();
@@ -118,7 +124,7 @@ export class AccountProvisioning {
     let prior;
     while ((prior = this.#join(data.operationId, signal))) await prior;
     const waiters = new Set<() => void>();
-    this.#pending.set(data.operationId, waiters);
+    this.#pending.set(data.operationId, { actorId: actor.accountId, waiters });
     try {
       return await this.#create(actor, data, signal);
     } finally {
@@ -270,6 +276,32 @@ export class AccountProvisioning {
     operationId: unknown,
     signal?: AbortSignal,
   ) {
+    return (await this.#review(principal, operationId, signal)).body;
+  }
+  async reviewResponse(
+    principal: Principal,
+    operationId: unknown,
+    signal?: AbortSignal,
+  ) {
+    const { body, settled } = await this.#review(
+      principal,
+      operationId,
+      signal,
+    );
+    const headers = new Headers({
+      "content-type": "application/json",
+      "cache-control": "no-store",
+    });
+    // An absence sampled without observing admission is never proof that the
+    // POST has finished. Keep the receipt body unchanged for status readers.
+    if (settled) headers.set("globnotes-creation-settled", "true");
+    return new Response(body, { headers });
+  }
+  async #review(
+    principal: Principal,
+    operationId: unknown,
+    signal?: AbortSignal,
+  ) {
     const { sessions } = this.access.authority;
     if (principal.kind !== "account" || principal.passwordChangeRequired) {
       throw new HttpError(401, "Sign in required.");
@@ -278,8 +310,11 @@ export class AccountProvisioning {
       throw new HttpError(422, "Invalid operation identity.");
     }
     sessions.assertCurrent(principal);
-    let prior;
-    while ((prior = this.#join(operationId, signal))) await prior;
+    let prior, settled = false;
+    while ((prior = this.#join(operationId, signal, principal.accountId))) {
+      await prior;
+      settled = true;
+    }
     this.#transaction.assertReady();
     const receipt = readAuthorityState((context) =>
       this.#receipt(operationId, context)
@@ -288,15 +323,18 @@ export class AccountProvisioning {
       receipt?.actorId === principal.accountId &&
       receipt.vaultId === this.access.vault.id
     ) {
-      return this.#acknowledge(
-        principal,
-        operationId,
-        receipt.accountId,
-        signal,
-      );
+      return {
+        body: this.#acknowledge(
+          principal,
+          operationId,
+          receipt.accountId,
+          signal,
+        ),
+        settled: false,
+      };
     }
     const snapshot = sessions.accounts.capture();
-    return this.#disclose(
+    const body = this.#disclose(
       principal,
       Object.freeze({
         operationId,
@@ -308,6 +346,7 @@ export class AccountProvisioning {
         sessions.accounts.assertUnchanged(snapshot);
       },
     );
+    return { body, settled };
   }
   #acknowledge(
     actor: AccountPrincipal,

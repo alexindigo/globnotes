@@ -11,7 +11,11 @@ import { GUEST } from "../server/auth/sessions.ts";
 import { StoredConfigConflict } from "../server/config/publication_outcome.ts";
 import { OperationError } from "../server/plugins/errors.ts";
 import { InstanceAuthority } from "../server/auth/authority.ts";
-import { VaultAccess, vaultAccessHandlers } from "../server/auth/access.ts";
+import {
+  identityAuthCheck,
+  VaultAccess,
+  vaultAccessHandlers,
+} from "../server/auth/access.ts";
 import { IdentityStateError } from "../server/auth/records.ts";
 import { identityWorkflowFixture } from "./helpers/identity_workflows.ts";
 
@@ -212,12 +216,31 @@ Deno.test("vault access: self-demotion acknowledgment and actor-bound lost-reply
         canCreateVault: true,
       },
     });
-    const own = await f.read(f.access.outcome(f.a, updateId));
-    assertEquals(own, { matched: true, capabilities: result.capabilities });
-    assertEquals(
-      (await f.read(f.access.outcome(f.b, updateId))).matched,
-      false,
+    const check = (principal: typeof f.a) =>
+      identityAuthCheck(
+        new Request(
+          `http://fixture/_/api/auth-check?accessUpdateId=${updateId}`,
+        ),
+        f.access,
+        () => Promise.resolve(principal),
+        () => Response.json("ordinary status"),
+      );
+    const own = await check(f.a), foreign = await check(f.b);
+    assertEquals([own.status, await own.json()], [200, {
+      matched: true,
+      capabilities: result.capabilities,
+    }]);
+    assertEquals([foreign.status, await foreign.json()], [200, {
+      matched: false,
+      capabilities: f.access.authority.capabilities(f.b, f.vault),
+    }]);
+    const status = await identityAuthCheck(
+      new Request("http://fixture/_/api/auth-check"),
+      f.access,
+      () => Promise.reject(Error("ordinary status does not need the receipt")),
+      () => Response.json("ordinary status"),
     );
+    assertEquals(await status.json(), "ordinary status");
     const denied = await assertRejects(
       () => f.access.view(f.a),
       HttpError,

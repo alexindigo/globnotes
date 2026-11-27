@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-only
-import { computed, reactive, readonly } from "vue";
+import { computed, reactive, readonly, ref, shallowReactive, shallowRef } from "vue";
 import { createUuid } from "../shared/uuid.ts";
 import { createOperationOwner } from "./operationOwner.js";
 import { getStoredToken } from "./tokenStorage.js";
@@ -23,11 +23,12 @@ export function createIdentityAccessSettingsState({ read = getIdentityAccess, wr
 } = {}) {
   const account = currentAccount();
   const form = Object.freeze({ scope: sessionKey(), token: token(), account: account ? Object.freeze({ ...account }) : null });
-  const fields = reactive({ view: null, demoted: false, loading: false, pending: false, inFlight: false,
-    unknown: false, needsReview: false, reviewing: false, error: "", status: "", dialog: null, confirmation: null,
-    login: "", temporaryPassword: "", level: "edit", provisioning: false, provisioningUnknown: false });
-  let disposed = false, revoked = false, ticket = 0, pending = null, submission = null, provisioning = null;
-  let aclWire = null, creationWire = null, confirmation = null, readCompletion = null, aclCompletion = null, creationCompletion = null, closing = null;
+  const fields = reactive({ view: null, demoted: false, loading: false, needsReview: false,
+    error: "", status: "", dialog: null, confirmation: null, login: "", temporaryPassword: "", level: "edit" });
+  const aclAction = shallowRef(null), submission = shallowRef(null), aclReview = shallowRef(null), creation = shallowRef(null);
+  const revoked = ref(false), disposed = ref(false);
+  const wireCompletions = new Set();
+  let ticket = 0, confirmation = null, readCompletion = null, closing = null;
   const changes = reactive(new Map());
   const everyone = Symbol("Everybody else");
   const levelAt = (view, id) => id === everyone ? view?.everybody : view?.grants[id];
@@ -45,15 +46,21 @@ export function createIdentityAccessSettingsState({ read = getIdentityAccess, wr
     return result;
   });
   const everybody = computed(() => changes.get(everyone)?.next ?? fields.view?.everybody ?? "none");
-  const original = () => !disposed && form.scope != null && form.scope === sessionKey() && form.token === token();
-  const current = () => !revoked && !fields.demoted && original();
+  const original = () => !disposed.value && form.scope != null && form.scope === sessionKey() && form.token === token();
+  const current = () => !revoked.value && !fields.demoted && original();
   function requireLive() {
     const allowed = canManage();
     if (!allowed || !current()) throw Object.assign(Error("Original access authority retired; choices are retained."), { status: 403 });
   }
   const dirty = computed(() => changes.size > 0);
-  const busy = computed(() => fields.loading || fields.pending || fields.inFlight || fields.reviewing || fields.provisioning);
-  const mutable = computed(() => current() && canManage() && !!fields.view && !busy.value && !fields.confirmation && !fields.unknown && !fields.needsReview && !fields.provisioningUnknown);
+  const pending = computed(() => !!aclAction.value);
+  const inFlight = computed(() => !!submission.value?.wirePending);
+  const unknown = computed(() => !!submission.value?.unknown);
+  const reviewing = computed(() => !!aclReview.value);
+  const provisioning = computed(() => !!creation.value && (!creation.value.unknown || creation.value.checking));
+  const provisioningUnknown = computed(() => !!creation.value?.unknown);
+  const busy = computed(() => fields.loading || pending.value || inFlight.value || reviewing.value || provisioning.value);
+  const mutable = computed(() => current() && canManage() && !!fields.view && !busy.value && !fields.confirmation && !unknown.value && !fields.needsReview && !provisioningUnknown.value);
   const editableRows = computed(() => mutable.value && !fields.dialog);
   const rows = computed(() => {
     const labels = new Map((fields.view?.named ?? []).map(row => [row.id, row.login]));
@@ -63,11 +70,13 @@ export function createIdentityAccessSettingsState({ read = getIdentityAccess, wr
       level: id === declared?.accountId ? "admin" : grants.value[id], serverSet: id === declared?.accountId,
       you: id === form.account?.id, canEdit: editableRows.value && id !== declared?.accountId }));
   });
+  const canReview = computed(() => original() && (unknown.value || fields.needsReview) && !pending.value && !reviewing.value && !fields.loading);
   const state = readonly(reactive({ ...Object.fromEntries(Object.keys(fields).map(key => [key, computed(() => fields[key])])),
+    pending, inFlight, unknown, reviewing, provisioning, provisioningUnknown,
     dirty, busy, mutable, editableRows, rows, grants, everybody, namedLevels: accessLevels, everybodyLevels: accessLevels.filter(level => level.value !== "admin"),
     dialogTitle: computed(() => fields.dialog === "create" ? "Create and add account" : "Add existing account"),
     canSave: computed(() => editableRows.value && dirty.value),
-    canReview: computed(() => original() && (fields.unknown || fields.needsReview) && !fields.pending && !fields.reviewing && !fields.loading),
+    canReview,
   }));
   const adapters = {
     owner: form,
@@ -119,8 +128,8 @@ export function createIdentityAccessSettingsState({ read = getIdentityAccess, wr
         return { value: { ...value, result } };
       },
       deliver(value) {
-        const accepted = value.kind === "write" ? acknowledge(value.admitted, value.result) : acknowledgeCreation(value.admitted, value.result);
-        if (accepted) value.work.receipt = value.result;
+        if (value.kind === "write") acknowledge(value.attempt, value.result);
+        else acknowledgeCreation(value.attempt, value.result);
       },
     },
   };
@@ -137,8 +146,20 @@ export function createIdentityAccessSettingsState({ read = getIdentityAccess, wr
     const promise = Promise.resolve().then(() => owner.dispatch(operation, { kind, ...intent }));
     return { owner, operation, promise };
   }
-  async function load({ retain = false } = {}) {
-    if (!current() || !canManage() || fields.inFlight || fields.provisioning || !retain && (dirty.value || fields.unknown || fields.provisioningUnknown)) return null;
+  function trackWire(work, settle) {
+    const wire = work.promise.then(
+      handle => settle(handle.value), error => settle(undefined, error),
+    ).finally(() => work.owner.release(work.operation));
+    const completion = wire.catch(() => {});
+    wireCompletions.add(completion);
+    void completion.then(() => wireCompletions.delete(completion));
+    return wire;
+  }
+  function releaseReview(work) {
+    void work.promise.finally(() => work.owner.release(work.operation)).catch(() => {});
+  }
+  async function load({ retain = false } = {}, creationOwner) {
+    if (!current() || !canManage() || inFlight.value || provisioning.value && creation.value !== creationOwner || !retain && (dirty.value || unknown.value || provisioningUnknown.value)) return null;
     const own = ++ticket, work = start(live, "read", {}); fields.loading = true;
     const wire = work.promise.then(handle => live.deliver(work.operation, "view", { operation: work.operation, ticket: own, view: handle.value, retain }))
       .finally(() => live.release(work.operation));
@@ -162,47 +183,60 @@ export function createIdentityAccessSettingsState({ read = getIdentityAccess, wr
     fields[name] = value;
   }
   const payload = () => snapshot({ everybody: everybody.value, grants: grants.value });
-  function acknowledge(admitted, result) {
-    if (disposed || submission !== admitted || result.updateId !== admitted.updateId || result.committed !== true) return false;
-    submission = null; fields.unknown = false; fields.needsReview = false; fields.error = "";
+  const ownsAcl = attempt => !disposed.value && submission.value === attempt;
+  function acknowledge(attempt, result) {
+    if (!ownsAcl(attempt) || result.updateId !== attempt.payload.updateId || result.committed !== true) return;
+    attempt.receipt = result; fields.needsReview = false; fields.error = "";
     if (result.capabilities?.canManageVault === false) fields.demoted = true;
     changes.clear(); fields.status = "Access saved.";
-    if (admitted.additions) fields.dialog = null;
+    if (attempt.payload.additions) fields.dialog = null;
+    submission.value = null;
     if (original()) completed(result);
-    return true;
   }
   async function refresh() { if (current() && canManage()) await load(); }
-  function commit(before, authorize = beforeCommit, additions) {
-    if (pending || !mutable.value || before !== fields.view) return pending ?? Promise.resolve(false);
-    const proposed = snapshot({ ...payload(), additions });
-    fields.pending = true;
-    pending = (async () => {
+  function preflight(before, authorize, action) {
+    const own = {};
+    own.observation = Promise.resolve().then(async () => {
       try {
-        if (await authorize() !== true || !current() || !canManage() || before !== fields.view) return false;
-        const admitted = Object.freeze({ ...proposed, revision: before.revision, signature: before.signature, updateId: createUuid() });
-        submission = admitted; fields.inFlight = true; fields.error = "";
-        const work = start(live, "write", { payload: admitted }, "retained"); aclWire = work;
-        const wire = work.promise.then(async handle => {
-          fields.inFlight = false;
-          const delivered = live.complete(work.operation, { kind: "write", admitted, work, result: handle.value });
-          const accepted = delivered && !disposed && submission !== admitted;
-          if (!accepted) throw Error("Missing access acknowledgment.");
-          if (work.receipt?.capabilities?.canManageVault) await refresh();
-          return accepted;
-        }, error => { fields.inFlight = false; throw error; }).finally(async () => { if (aclWire === work) aclWire = null; await live.release(work.operation); });
-        aclCompletion = wire.catch(() => {});
-        try { return await observe(wire); }
-        catch (error) {
-          if (disposed || submission !== admitted) return submission !== admitted && !disposed;
-          const status = error.response?.status ?? error.status;
-          const loginRefused = error.response?.data?.code === "access_login_conflict";
-          fields.unknown = !status || status >= 500; fields.needsReview = fields.unknown || status === 409 && !loginRefused;
-          fields.error = fields.unknown ? "Connection lost. Review current access before continuing." : loginRefused ? "The account could not be added. Check the login and try again." : "Access was not saved. Review your choices and try again.";
-          if (!fields.unknown) submission = null;
-          return false;
-        }
-      } finally { pending = null; fields.pending = false; }
-    })(); return pending;
+        if (await authorize() !== true || !canManage() || !current() || before !== fields.view) return false;
+      } catch {
+        if (current() && aclAction.value === own) fields.error = "Access was not saved. Review your choices and try again.";
+        return false;
+      }
+      return await action();
+    }).finally(() => { if (aclAction.value === own) aclAction.value = null; });
+    // Publish the owner and its join before calling even a synchronous adapter.
+    aclAction.value = own;
+    return own.observation;
+  }
+  function refuseAcl(attempt, error) {
+    if (!ownsAcl(attempt)) return;
+    const status = error?.response?.status ?? error?.status;
+    const loginRefused = error?.response?.data?.code === "access_login_conflict";
+    attempt.unknown = !status || status >= 500;
+    fields.needsReview = attempt.unknown || status === 409 && !loginRefused;
+    fields.error = attempt.unknown ? "Connection lost. Review current access before continuing." : loginRefused ? "The account could not be added. Check the login and try again." : "Access was not saved. Review your choices and try again.";
+    if (!attempt.unknown) submission.value = null;
+  }
+  function commit(before, authorize = beforeCommit, additions) {
+    if (!mutable.value || before !== fields.view) return aclAction.value?.observation ?? Promise.resolve(false);
+    const proposed = snapshot({ ...payload(), additions });
+    return preflight(before, authorize, async () => {
+      const payload = Object.freeze({ ...proposed, revision: before.revision, signature: before.signature, updateId: createUuid() });
+      const attempt = shallowReactive({ payload, wirePending: true, unknown: false, receipt: null });
+      fields.error = ""; submission.value = attempt;
+      const work = start(live, "write", { payload }, "retained");
+      const wire = trackWire(work, async (result, error) => {
+        if (!ownsAcl(attempt)) return !!attempt.receipt;
+        if (!error) live.complete(work.operation, { kind: "write", attempt, result });
+        if (!attempt.receipt) refuseAcl(attempt, error);
+        attempt.wirePending = false;
+        if (attempt.receipt?.capabilities?.canManageVault) await refresh();
+        return !!attempt.receipt;
+      });
+      try { return await observe(wire); }
+      catch (error) { if (!attempt.unknown) refuseAcl(attempt, error); return !!attempt.receipt; }
+    });
   }
   async function requestCommit({ alreadyResolved = false } = {}) {
     if (!state.canSave) return false;
@@ -210,62 +244,65 @@ export function createIdentityAccessSettingsState({ read = getIdentityAccess, wr
     const oldLevel = form.account?.id === before.declaredAdmin?.accountId ? "admin" : before.grants[form.account?.id] ?? before.everybody;
     const newLevel = form.account?.id === before.declaredAdmin?.accountId ? "admin" : proposed.grants[form.account?.id] ?? proposed.everybody;
     if (oldLevel === "admin" && newLevel !== "admin") {
-      fields.pending = true;
-      try {
-        if (!alreadyResolved && await beforeCommit() !== true || !current() || !canManage() || before !== fields.view) return false;
+      return await preflight(before, alreadyResolved ? () => true : beforeCommit, () => {
         confirmation = Object.freeze({ before });
         fields.confirmation = { title: "Remove your Admin access?", login: form.account.login, current: "Admin", next: accessLevelLabel(newLevel),
           consequence: newLevel === "edit" ? "You will be able to read and edit notes, but not manage this vault's access, settings or plugins." : newLevel === "view" ? "You will only be able to read notes, not edit them or manage this vault's access, settings or plugins." : "You will not be able to open notes or manage this vault's access, settings or plugins.",
           confirmLabel: `Change my access to ${accessLevelLabel(newLevel)}` };
         return true;
-      } finally { fields.pending = false; }
+      });
     }
     return await commit(before, alreadyResolved ? async () => true : beforeCommit);
   }
   function confirmChange() {
     const request = confirmation;
-    if (!request || fields.pending || !current() || !canManage()) return Promise.resolve(false);
+    if (!request || busy.value || !current() || !canManage()) return Promise.resolve(false);
     fields.confirmation = null; confirmation = null;
     return commit(request.before, async () => true);
   }
   async function review() {
-    if (!original() || fields.pending || fields.reviewing || fields.loading || !submission && !fields.needsReview) return false;
-    fields.reviewing = true;
+    if (!canReview.value) return false;
+    const attempt = submission.value, own = {};
+    aclReview.value = own;
+    const ownsReview = () => original() && aclReview.value === own && (attempt ? ownsAcl(attempt) : fields.needsReview);
     try {
-      if (!submission) {
-        if (!await load({ retain: true })) return false;
+      if (!attempt) {
+        if (!await load({ retain: true }) || !ownsReview()) return false;
         fields.needsReview = false;
         fields.error = dirty.value ? "Current access reviewed. Save explicitly to apply your remaining choices." : "";
         return true;
       }
-      const admitted = submission, work = start(recovery, "acl-outcome", { id: admitted.updateId }, "retained");
+      const updateId = attempt.payload.updateId;
+      const work = start(recovery, "acl-outcome", { id: updateId }, "retained");
       try {
         const handle = await observe(work.promise);
-        if (!original() || submission !== admitted) return false;
         const result = { ...handle.value };
+        if (!ownsReview()) return false;
         if (result.matched === true) {
-          recovery.complete(work.operation, { kind: "write", admitted, work, result: { ...result, committed: true, updateId: admitted.updateId, recovered: true } });
-          if (work.receipt?.capabilities?.canManageVault) await refresh(); return !disposed && submission !== admitted;
+          recovery.complete(work.operation, { kind: "write", attempt, result: { ...result, committed: true, updateId, recovered: true } });
+          if (attempt.receipt?.capabilities?.canManageVault) await refresh();
+          return !!attempt.receipt;
         }
-        fields.error = "The submitted access change could not be confirmed. Your choices are retained; do not repeat it automatically."; return false;
-      } finally { void work.promise.finally(() => recovery.release(work.operation)).catch(() => {}); }
-    } catch { if (original()) fields.error = "Connection lost. Your access choices are retained."; return false; }
-    finally { fields.reviewing = false; }
+        fields.error = attempt.wirePending ? "The original access change is still pending. Review its outcome again before continuing." : "The submitted access change could not be confirmed. Your choices are retained; do not repeat it automatically.";
+        return false;
+      } finally { releaseReview(work); }
+    } catch { if (ownsReview()) fields.error = "Connection lost. Your access choices are retained."; return false; }
+    finally { if (aclReview.value === own) aclReview.value = null; }
   }
   async function discard() {
-    if (disposed || fields.inFlight || fields.provisioning || pending || fields.reviewing || fields.provisioningUnknown) return false;
-    fields.unknown = false; fields.needsReview = false; submission = null; fields.error = "";
+    if (disposed.value || inFlight.value || pending.value || reviewing.value || creation.value) return false;
+    fields.needsReview = false; submission.value = null; fields.error = "";
     changes.clear();
     fields.dialog = null; fields.login = ""; fields.temporaryPassword = "";
     if (!current() || !canManage()) return true;
     return !!await load();
   }
   async function resolveDeparture(reason, decision) {
-    if (pending) await pending;
-    if (fields.confirmation || fields.inFlight || fields.provisioning) return false;
-    if (!dirty.value && !fields.unknown && !fields.provisioningUnknown) return true;
-    const choice = decision ?? await confirmDeparture({ reason, pages: [{ page: { label: "Access" }, uncertain: fields.unknown || fields.provisioningUnknown, canSave: state.canSave }], canSave: state.canSave });
-    if (choice === "save") { await requestCommit({ alreadyResolved: decision !== undefined }); return !fields.confirmation && !dirty.value && !fields.unknown && !fields.inFlight; }
+    if (aclAction.value) await aclAction.value.observation;
+    if (fields.confirmation || inFlight.value || reviewing.value || provisioning.value) return false;
+    if (!dirty.value && !unknown.value && !provisioningUnknown.value) return true;
+    const choice = decision ?? await confirmDeparture({ reason, pages: [{ page: { label: "Access" }, uncertain: unknown.value || provisioningUnknown.value, canSave: state.canSave }], canSave: state.canSave });
+    if (choice === "save") { await requestCommit({ alreadyResolved: decision !== undefined }); return !fields.confirmation && !dirty.value && !unknown.value && !inFlight.value && !creation.value; }
     if (choice === "discard") return await discard();
     return false;
   }
@@ -273,12 +310,23 @@ export function createIdentityAccessSettingsState({ read = getIdentityAccess, wr
     if (!mutable.value || fields.dialog || !["existing", "create"].includes(kind) || !await resolveDeparture("adding an account") || !mutable.value) return false;
     fields.dialog = kind; fields.login = ""; fields.temporaryPassword = ""; fields.level = "edit"; fields.error = ""; return true;
   }
-  function acknowledgeCreation(admitted, result) {
-    if (disposed || provisioning !== admitted || result.operationId !== admitted.operationId || result.committed !== true || typeof result.accountId !== "string" || !result.accountId) return false;
-    provisioning = null; fields.provisioningUnknown = false; fields.temporaryPassword = ""; fields.dialog = null;
-    fields.status = "Account created and added.";
-    if (original()) notify({ summary: "Account created and added", detail: `${admitted.login} has ${accessLevelLabel(admitted.level)} access after choosing a password.` });
-    return true;
+  const ownsCreation = attempt => !disposed.value && creation.value === attempt;
+  function acknowledgeCreation(attempt, result) {
+    if (!ownsCreation(attempt) || result.operationId !== attempt.operationId || result.committed !== true || typeof result.accountId !== "string" || !result.accountId) return;
+    attempt.committed = true;
+    fields.temporaryPassword = ""; fields.error = ""; fields.status = "Account created and added.";
+    if (original()) notify({ summary: "Account created and added", detail: `${attempt.login} has ${accessLevelLabel(attempt.level)} access after choosing a password.` });
+    fields.dialog = null;
+    creation.value = null;
+  }
+  function refuseCreation(attempt, error) {
+    if (!ownsCreation(attempt)) return;
+    const status = error?.response?.status ?? error?.status;
+    if (status >= 400 && status < 500) {
+      fields.needsReview = status === 409 && error.response?.data?.code !== "access_login_conflict";
+      fields.error = fields.needsReview ? "Access changed. Review current access before creating this account." : "The account could not be added. Check the login and try again.";
+      creation.value = null;
+    } else attempt.unknown = true;
   }
   async function submitDialog() {
     if (!mutable.value || !fields.dialog || !fields.login.trim()) return false;
@@ -286,72 +334,71 @@ export function createIdentityAccessSettingsState({ read = getIdentityAccess, wr
       return await commit(fields.view, beforeCommit, [{ login: fields.login, level: fields.level }]);
     }
     if (!fields.temporaryPassword) { fields.error = "Enter a temporary password."; return false; }
-    const admitted = Object.freeze({ login: fields.login, temporaryPassword: fields.temporaryPassword, level: fields.level,
+    const payload = Object.freeze({ login: fields.login, temporaryPassword: fields.temporaryPassword, level: fields.level,
       revision: fields.view.revision, signature: fields.view.signature, operationId: createUuid() });
-    provisioning = admitted; fields.provisioning = true;
-    const work = start(live, "create", { payload: admitted }, "retained"); creationWire = work;
-    const wire = work.promise.then(async handle => {
-      if (creationWire === work) creationWire = null;
-      fields.provisioning = false;
-      const delivered = live.complete(work.operation, { kind: "create", admitted, work, result: handle.value });
-      const accepted = delivered && !disposed && provisioning !== admitted;
-      if (accepted) await refresh();
-      return accepted;
-    }, error => { if (creationWire === work) creationWire = null; throw error; }).finally(() => live.release(work.operation));
-    creationCompletion = wire.catch(() => {});
-    try {
-      if (!await observe(wire)) throw Error("Missing account creation acknowledgment."); return true;
-    } catch (error) {
-      fields.provisioning = false;
-      if (disposed || provisioning !== admitted) return !disposed && provisioning !== admitted;
-      const status = error.response?.status ?? error.status;
-      if (status && status < 500) {
-        provisioning = null;
-        fields.needsReview = status === 409 && error.response?.data?.code !== "access_login_conflict";
-        fields.error = fields.needsReview ? "Access changed. Review current access before creating this account." : "The account could not be added. Check the login and try again.";
-        return false;
-      }
-      fields.provisioningUnknown = true; return await reviewCreation();
-    } finally { fields.provisioning = false; }
+    const attempt = shallowReactive({ operationId: payload.operationId, login: payload.login, level: payload.level,
+      unknown: false, checking: false, committed: false });
+    fields.error = ""; creation.value = attempt;
+    const work = start(live, "create", { payload }, "retained");
+    const wire = trackWire(work, async (result, error) => {
+      if (!ownsCreation(attempt)) return;
+      if (!error) live.complete(work.operation, { kind: "create", attempt, result });
+      if (attempt.committed) await refresh();
+      else refuseCreation(attempt, error);
+    });
+    try { await observe(wire); }
+    catch { if (ownsCreation(attempt)) attempt.unknown = true; }
+    if (ownsCreation(attempt)) await reviewCreation();
+    return attempt.committed;
   }
   async function reviewCreation() {
-    if (!original() || !provisioning || fields.provisioning) return false;
-    const admitted = provisioning, work = start(recovery, "create-outcome", { id: admitted.operationId }, "retained"); fields.provisioning = true;
+    const attempt = creation.value;
+    if (!original() || !attempt?.unknown || attempt.checking) return false;
+    attempt.checking = true;
+    const work = start(recovery, "create-outcome", { id: attempt.operationId }, "retained");
     try {
       const handle = await observe(work.promise), result = { ...handle.value };
-      if (!original() || provisioning !== admitted) return false;
+      if (!original() || !ownsCreation(attempt)) return attempt.committed;
       if (result.committed === true) {
-        recovery.complete(work.operation, { kind: "create", admitted, work, result });
-        fields.provisioning = false;
-        if (!disposed && provisioning !== admitted) { await refresh(); return true; }
+        recovery.complete(work.operation, { kind: "create", attempt, result });
+        if (attempt.committed) { await refresh(); return true; }
         throw Error("Missing account outcome.");
       }
-      if (result.committed !== false || result.operationId !== admitted.operationId) throw Error("Missing account outcome.");
-      if (creationWire) { fields.error = "The original account creation is still pending. Check its outcome again before continuing."; return false; }
-      provisioning = null; fields.provisioningUnknown = false; fields.temporaryPassword = ""; fields.provisioning = false;
-      await refresh(); fields.error = "The account was not added. Check your details and try again."; return false;
-    } catch { if (original() && provisioning === admitted) fields.error = "Connection lost. Please try checking this account creation again."; return false; }
-    finally { fields.provisioning = false; void work.promise.finally(() => recovery.release(work.operation)).catch(() => {}); }
+      if (result.committed !== false || result.operationId !== attempt.operationId) throw Error("Missing account outcome.");
+      // A browser rejection cannot prove server settlement, and an unqualified
+      // absence may have been sampled before the server admitted the POST.
+      if (result.settled !== true) {
+        fields.error = "The original account creation is still pending. Check its outcome again before continuing."; return false;
+      }
+      fields.temporaryPassword = "";
+      await load({ retain: true }, attempt);
+      if (original() && ownsCreation(attempt)) {
+        fields.error = "The account was not added. Check your details and try again.";
+        creation.value = null;
+      }
+      return attempt.committed;
+    } catch { if (original() && ownsCreation(attempt)) fields.error = "Connection lost. Please try checking this account creation again."; return attempt.committed; }
+    finally { attempt.checking = false; releaseReview(work); }
   }
-  return { state, load, requestCommit, confirmChange, review, discard, resolveDeparture, setLevel, setEverybody, remove, setField, openDialog, submitDialog, reviewCreation,
+  return { state, load: options => load(options), requestCommit, confirmChange, review, discard, resolveDeparture, setLevel, setEverybody, remove, setField, openDialog, submitDialog, reviewCreation,
     cancelConfirmation() { if (!busy.value) { confirmation = null; fields.confirmation = null; } },
-    cancelDialog() { if (!busy.value && !fields.provisioningUnknown) { fields.dialog = null; fields.temporaryPassword = ""; } },
-    hasWork: () => dirty.value || !!pending || fields.inFlight || fields.unknown || fields.provisioningUnknown || fields.provisioning || !!fields.confirmation || live.hasWork() || recovery.hasWork(),
+    cancelDialog() { if (!busy.value && !creation.value) { fields.dialog = null; fields.temporaryPassword = ""; } },
+    hasWork: () => dirty.value || pending.value || !!submission.value || !!creation.value || !!fields.confirmation || live.hasWork() || recovery.hasWork(),
     async settle() {
       try {
         await observe((async () => {
-          if (pending) await pending;
-          await Promise.all([aclCompletion, creationCompletion, readCompletion]);
+          if (aclAction.value) await aclAction.value.observation;
+          await Promise.all([...wireCompletions, readCompletion]);
           await Promise.all([live.settle(), recovery.settle()]);
         })());
       } catch { return false; }
-      return !fields.inFlight && !fields.provisioning && !creationWire;
+      return !inFlight.value && !provisioning.value;
     },
-    invalidate() { if (dirty.value || fields.unknown || fields.provisioningUnknown || busy.value) return false; ticket++; fields.view = null; return true; },
-    revoke() { revoked = true; live.revoke(); },
+    invalidate() { if (dirty.value || unknown.value || creation.value || busy.value) return false; ticket++; fields.view = null; return true; },
+    revoke() { revoked.value = true; live.revoke(); },
     dispose() {
       if (closing) return closing;
-      disposed = true; ticket++; fields.temporaryPassword = ""; confirmation = null; fields.confirmation = null; provisioning = null;
+      disposed.value = true; ticket++; fields.temporaryPassword = ""; confirmation = null; fields.confirmation = null; creation.value = null; submission.value = null;
       closing = Promise.all([live.dispose(), recovery.dispose()]); return closing;
     },
   };

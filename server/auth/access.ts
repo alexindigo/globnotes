@@ -33,6 +33,7 @@ import {
 import { readAuthorityState } from "./authority_context.ts";
 import { readRequestJson } from "./request_json.ts";
 import { AccessLoginConflict } from "./access_login_conflict.ts";
+import { singleIdentityVault } from "./http_policy.ts";
 
 function conflict(message: string): never {
   throw new HttpError(409, message);
@@ -570,4 +571,19 @@ export function vaultAccessHandlers(
       );
     },
   });
+}
+
+/** Prepared branch of the existing status route; receipt reads never reopen the
+ * Admin-only Access list or rely on the legacy authentication probe. */
+export function identityAuthCheck(
+  request: Request,
+  workflow: VaultAccess,
+  principal: (request: Request) => Promise<Principal>,
+  status: (request: Request) => Response | Promise<Response>,
+) {
+  const ids = new URL(request.url).searchParams.getAll("accessUpdateId");
+  if (!ids.length) return status(request);
+  if (ids.length !== 1) throw new HttpError(422, "Invalid outcome request.");
+  singleIdentityVault(workflow.vault)(request);
+  return vaultAccessHandlers(workflow, principal).outcome(request, ids[0]);
 }
