@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { isReadonly, reactive, ref } from "vue";
 import { heldOperation } from "../../tests/helpers/owned_operation.ts";
 import { createIdentityNoteController, createNoteController } from "../noteController.js";
-import { identitySessionKey } from "../appSessionPolicy.js";
 import { createIdentityAppSession } from "../appSession.js";
 import { createVaultChanges } from "../vaultChanges.js";
 import { createNotePreview } from "../notePreview.js";
@@ -203,25 +202,37 @@ describe("note workflow ownership", () => {
   it("a clean identity reader hands off from guest to account and rereads under that owner", async () => {
     vi.useRealTimers();
     const config = ref({ principal: { kind: "guest" }, accountId: null, vaultId: "vault", sessionGeneration: "guest", authorityRevision: 0, capabilities: { canRead: true, canEdit: false } });
-    const session = { key: () => identitySessionKey(config.value), snapshot: () => config.value, tokens: { isCurrentTokenStored: () => false } };
+    const session = createIdentityAppSession({ config: () => config.value, setConfig: value => { config.value = value; },
+      tokens: { getStoredToken: () => null, isCurrentTokenStored: () => false }, transport: {}, stopRuntime() {}, applyBrand() {} });
+    session.adopt(config.value);
     const read = vi.fn(async path => ({ path, content: config.value.accountId ? "Account note" : "Public note" }));
     const f = fixture({ createController: adapters => createIdentityNoteController({ session, ...adapters }), read,
       getContext: () => ({ path: "folder/P", query: {}, notePaths: [], capabilities: config.value.capabilities }) });
-    await f.controller.mount(); expect(f.controller.state.note.content).toBe("Public note");
-    config.value = { ...config.value, principal: { kind: "account" }, accountId: "alice", sessionGeneration: "alice", capabilities: { canRead: true, canEdit: true } };
-    await vi.waitFor(() => expect([f.controller.state.loadStatus, f.controller.state.note.content]).toEqual(["loaded", "Account note"]));
-    expect([read.mock.calls, f.controller.state.canModify, f.controller.state.editMode]).toEqual([[["folder/P"], ["folder/P"]], true, false]);
+    try {
+      await f.controller.mount(); expect(f.controller.state.note.content).toBe("Public note");
+      expect(session.adopt({ ...config.value, principal: { kind: "account", id: "alice", login: "alice" }, accountId: "alice", sessionGeneration: "alice", capabilities: { canRead: true, canEdit: true } })).toBe(true);
+      await vi.waitFor(() => expect([f.controller.state.loadStatus, f.controller.state.note.content]).toEqual(["loaded", "Account note"]));
+      expect([read.mock.calls, f.controller.state.canModify, f.controller.state.editMode]).toEqual([[["folder/P"], ["folder/P"]], true, false]);
+    } finally { await f.controller.dispose(); await session.dispose(); }
   });
   it.each(["same-account", "different-account"])("identity reader retains the exact dirty editor through %s recovery", async mode => {
-    const valid = ref(true), config = ref({ principal: { kind: "account" }, accountId: "alice", vaultId: "vault", sessionGeneration: "alice", authorityRevision: 0, capabilities: { canRead: true, canEdit: true } });
-    const session = { key: () => valid.value ? identitySessionKey(config.value) : null, snapshot: () => config.value, tokens: { isCurrentTokenStored: () => false } };
+    const config = ref({ principal: { kind: "account", id: "alice", login: "alice" }, accountId: "alice", vaultId: "vault", sessionGeneration: "alice", authorityRevision: 0, capabilities: { canRead: true, canEdit: true } });
+    let token = "alice-token";
+    const session = createIdentityAppSession({ config: () => config.value, setConfig: value => { config.value = value; },
+      tokens: { getStoredToken: () => token, storeToken: value => { token = value; }, isCurrentTokenStored: () => false }, transport: {}, stopRuntime() {}, applyBrand() {} });
+    session.adopt(config.value);
     const f = fixture({ createController: adapters => createIdentityNoteController({ session, ...adapters }),
       getContext: () => ({ path: "folder/P", query: {}, notePaths: [], capabilities: config.value.capabilities }) });
-    await f.controller.mount(); f.enter(); f.input("Alice retained typing"); const port = f.port;
-    valid.value = false; expect([f.controller.currentBuffer(), f.controller.state.canModify, f.controller.state.editMode]).toEqual(["Alice retained typing", false, true]);
-    config.value = { ...config.value, accountId: mode === "same-account" ? "alice" : "bob", authorityRevision: 1 }; valid.value = true;
-    expect([f.controller.currentBuffer(), f.controller.state.canModify, f.controller.state.editMode, f.adapters.read.mock.calls]).toEqual(["Alice retained typing", mode === "same-account", true, [["folder/P"]]]);
-    expect(f.port).toBe(port); expect(f.drafts.clear.mock.calls).toEqual([]);
+    try {
+      await f.controller.mount(); f.enter(); f.input("Alice retained typing");
+      const sameAccount = mode === "same-account", login = sameAccount ? "alice" : "bob";
+      expect(session.acceptToken(`${login}-renewed-token`, false)).toBe(true);
+      expect([f.controller.currentBuffer(), f.controller.state.canModify, f.controller.state.editMode]).toEqual(["Alice retained typing", false, true]);
+      expect(session.adopt({ ...config.value, principal: { kind: "account", id: login, login }, accountId: login, sessionGeneration: "renewed" })).toBe(sameAccount);
+      expect([f.controller.currentBuffer(), f.controller.state.canModify, f.controller.state.editMode, f.controller.state.editorReadOnly, f.adapters.read.mock.calls])
+        .toEqual(["Alice retained typing", sameAccount, true, !sameAccount, [["folder/P"]]]);
+      expect(f.drafts.clear.mock.calls).toEqual([]);
+    } finally { await f.controller.dispose(); await session.dispose(); }
   });
   it("the same dirty note survives actual session outage and held reconnect revalidation", async () => {
     vi.useRealTimers();

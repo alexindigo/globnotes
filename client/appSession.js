@@ -53,13 +53,20 @@ export function createIdentityAppSession({ config, setConfig, tokens = createIde
         navigate: { deliver: value => { value.navigation = navigate(value.target); } },
       },
     });
-  function retire({ preserveSignIn = false, onTransition = () => {}, closing = false } = {}) {
+  function withdrawCapabilities(current) {
+    if (!current()) return false;
+    const previous = config(), names = Object.keys(previous?.capabilities ?? {});
+    if (ready.value && names.some(name => previous.capabilities[name] === true)) {
+      setConfig({ ...previous, capabilities: Object.fromEntries(names.map(name => [name, false])) });
+    }
+    return current();
+  }
+  function retire({ preserveSignIn = false, onTransition = () => {}, closing = false, withdraw = false } = {}) {
     if (context.disposed && !closing) return false;
     const current = closing ? () => true : context.advanceProjection();
     onTransition(current);
     if (!preserveSignIn) cancelSignIn();
     const release = releaseRecovery; releaseRecovery = null;
-    const wasValid = valid.value;
     loginProof = null;
     valid.value = false;
     // Every external callback may replace the credential or projection.
@@ -69,8 +76,9 @@ export function createIdentityAppSession({ config, setConfig, tokens = createIde
     setChangesSession(null); if (!current()) return false;
     setBrowseSession(null); if (!current()) return false;
     clearBrowseData(); if (!current()) return false;
-    if (wasValid && !closing) setConfig({ ...config(), capabilities: Object.fromEntries(Object.keys(config().capabilities ?? {}).map(name => [name, false])) });
-    return current();
+    // Retiring live operations does not replace the retained document's config.
+    // Only authority loss or sign-out withdraws its published capabilities.
+    return withdraw ? withdrawCapabilities(current) : current();
   }
   function adopt(fresh, onTransition = () => {}) {
     if (unavailable()) return false;
@@ -111,7 +119,7 @@ export function createIdentityAppSession({ config, setConfig, tokens = createIde
   }
   function retainAndRetire(current, options) {
     retainUnsavedWork();
-    return current() && retire(options);
+    return current() && retire({ ...options, withdraw: true });
   }
   function beginRecovery() {
     if (!recover || releaseRecovery || context.disposed) return;
@@ -157,7 +165,7 @@ export function createIdentityAppSession({ config, setConfig, tokens = createIde
       // Logout/recovery already retired it; do not invalidate that original
       // completion merely because its anonymous revalidation is unavailable.
       if (ready.value) {
-        if (valid.value && !retainAndRetire(failureCurrent, { preserveSignIn: true })) return false;
+        if (valid.value ? !retainAndRetire(failureCurrent, { preserveSignIn: true }) : !withdrawCapabilities(failureCurrent)) return false;
         const recovering = context.captureTransition();
         if (!recovery) { outage(error); if (recovering()) beginRecovery(); }
       }
@@ -207,7 +215,7 @@ export function createIdentityAppSession({ config, setConfig, tokens = createIde
     if (authorityRead?.current()) return authorityRead.pending;
     retainUnsavedWork();
     if (!originating()) return Promise.resolve(false);
-    if ((error?.response?.status ?? error?.status) !== 403 && !retire({ preserveSignIn: !error })) return Promise.resolve(false);
+    if ((error?.response?.status ?? error?.status) !== 403 && !retire({ preserveSignIn: !error, withdraw: true })) return Promise.resolve(false);
     const read = { current: capture() };
     authorityRead = read;
     read.pending = refresh().finally(() => { if (authorityRead === read) authorityRead = null; });
@@ -233,7 +241,7 @@ export function createIdentityAppSession({ config, setConfig, tokens = createIde
     transition.pending = Promise.resolve().then(async () => {
       try {
         const decision = await owner.dispatch(operation, "logout");
-        if (decision.value !== "proceed" || !current() || !retire()) return false;
+        if (decision.value !== "proceed" || !current() || !retire({ withdraw: true })) return false;
         const clearing = context.advanceCredential();
         const signedOut = transition.current = () => clearing() && !tokens.getStoredToken();
         tokens.clearStoredToken();
@@ -248,7 +256,7 @@ export function createIdentityAppSession({ config, setConfig, tokens = createIde
   }
   function reload() { if (reloadRequired.value) reloadPage(); }
   return Object.freeze({ state: readonly(reactive({ ready, valid, reloadRequired })), key, capture, captureCredential,
-    load: refresh, refresh, acceptProjection: () => refresh({ accepted: true }), adopt, invalidate: () => !unavailable() && retire(), beforeSignIn, acceptToken, signIn, logout, transport: io, tokens,
+    load: refresh, refresh, acceptProjection: () => refresh({ accepted: true }), adopt, invalidate: () => !unavailable() && retire({ withdraw: true }), beforeSignIn, acceptToken, signIn, logout, transport: io, tokens,
     authorityChanged, beginCredentialHandoff,
     isDisposed: () => context.disposed,
     hasWork: () => attempt.hasWork(), settle: () => attempt.settle(),

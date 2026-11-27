@@ -108,8 +108,8 @@ it.each(["this tab", "another tab"])("a different account in %s freezes the old 
 
 it("accepting a renewed credential for the same account does not require reload", async () => {
   const f = app({ transport: { getToken: async () => "alice-renewed.jwt",
-    getConfig: async () => ({ ...projection("alice", "edit"), sessionGeneration: "renewed" }) } });
-  const authenticated = vi.fn(), fresh = flow(f, { authenticated });
+     getConfig: async () => ({ ...projection("alice", "edit"), sessionGeneration: "renewed" }) } });
+  const authenticated = vi.fn(), fresh = flow(f, { authenticated, credentials: () => ({ username: "alice", password: "password" }) });
   await fresh.login.logIn();
   expect(authenticated).toHaveBeenCalledExactlyOnceWith();
   expect([f.current.value.sessionGeneration, f.session.state.reloadRequired, f.reloadPage.mock.calls]).toEqual(["renewed", null, []]);
@@ -379,7 +379,7 @@ it("the default transport cannot deliver a pre-outage read after the same projec
 
 it.each(["first-read-first", "newest-read-first"])("sign-in follows the accepted account across concurrent refreshes (%s)", async order => {
   let first, second, reads = 0;
-  const f = app({ transport: { getToken: async () => "bob.jwt", getConfig: async () => {
+  const f = app({ account: null, transport: { getToken: async () => "bob.jwt", getConfig: async () => {
     const number = reads++; await (number === 0 ? first() : second()); return projection("bob", number === 0 ? "admin" : "view");
   } } });
   const login = flow(f), completed = vi.fn();
@@ -407,8 +407,19 @@ it.each(["different-account", "revoked"])("a superseding %s cannot complete an o
   await heldOperation(controlled("old sign-in", f.session), boundary => { hold = boundary; return login.login.logIn(); }, async original => {
     await original.reached(); await f.session.refresh(); await original.result();
     expect(login.navigate.mock.calls).toEqual([]);
-    expect([f.current.value.principal.id, f.session.state.valid]).toEqual([winner === "revoked" ? "alice" : "charlie", winner !== "revoked"]);
+    expect([f.current.value.principal.id, f.session.state.valid, f.session.state.reloadRequired?.detail]).toEqual([
+      "alice", false, winner === "different-account" ? "You're now signed in as charlie. Reload to continue." : undefined,
+    ]);
   });
+});
+it.each([401, 503])("a %s after credential retirement still withdraws the old capabilities", async status => {
+  const f = app({ transport: { getConfig: async () => { throw Object.assign(new Error("unavailable"), { status }); } } });
+  const initial = f.current.value;
+  expect(f.session.acceptToken("alice-renewed.jwt", false)).toBe(true);
+  expect([f.session.key(), f.current.value]).toEqual([null, initial]);
+  expect(await f.session.refresh()).toBe(false);
+  expect([f.session.key(), f.current.value, f.session.state.reloadRequired]).toEqual([null,
+    { ...initial, capabilities: { canRead: false, canEdit: false, canManageVault: false, canManageOwnAccount: false, canCreateVault: false } }, null]);
 });
 it("config rejection stays with the original refresh instead of recursively reporting authority", async () => {
   const error = Object.assign(new Error("invalid token"), { status: 401 }), authority = vi.fn();
@@ -514,9 +525,9 @@ it("replacement credentials cancel held recovery and cannot adopt its old projec
     } }, stopRuntime() {}, applyBrand() {}, setChangesSession: changes.setSession, recover: changes.revalidate });
   cleanups.push(() => session.dispose()); session.adopt(fresh.value);
   await heldOperation(controlled("held recovery", session), boundary => { hold = boundary; return session.refresh().then(async result => { await changes.settle(); return result; }); }, async work => {
-    await work.reached(); session.acceptToken("bob.jwt", false); session.adopt(projection("bob", "view"));
+    await work.reached(); session.acceptToken("alice-renewed.jwt", false); session.adopt(projection("alice", "view", 2));
     expect(await work.result()).toBe(false);
-    expect([token, session.state.valid, fresh.value, timers]).toEqual(["bob.jwt", true, projection("bob", "view"), []]);
+    expect([token, session.state.valid, fresh.value, timers]).toEqual(["alice-renewed.jwt", true, projection("alice", "view", 2), []]);
   });
 });
 it("retired index, search and sidebar reads cannot repopulate another identity", async () => {

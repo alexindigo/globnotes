@@ -120,7 +120,7 @@ it("credential handoff defers expected authority failure until the admitted chan
     expect(write.mock.calls.map(([, options]) => options)).toEqual([{ token: "alice-token" }]);
   });
 });
-it("clean forms wait for the new projection instead of reading during token retirement", async () => {
+it.each(["alice", "bob"])("clean forms wait for %s's projection during token retirement and never read a second account", async login => {
   const config = ref(configFor()), token = ref("alice-token");
   const session = createIdentityAppSession({ config: () => config.value, setConfig: value => { config.value = value; },
     tokens: { getStoredToken: () => token.value, storeToken: value => { token.value = value; } }, transport: {}, stopRuntime() {}, applyBrand() {} });
@@ -128,10 +128,17 @@ it("clean forms wait for the new projection instead of reading during token reti
   const read = vi.fn(async () => accountView(config.value.accountId));
   const controllers = createIdentitySettingsControllers({ session, navigate: vi.fn(), toast: { add() {} }, account: { read } }); closes.push(controllers.dispose);
   await controllers.account.load(); const old = controllers.account;
-  session.acceptToken("bob-token", false);
+  session.acceptToken(`${login}-renewed-token`, false);
   expect([session.key(), read.mock.calls, controllers.account === old]).toEqual([null, [[{ token: "alice-token" }]], true]);
-  session.adopt(configFor("bob")); await vi.waitFor(() => expect(controllers.account.state.view?.login).toBe("bob"));
-  expect(read.mock.calls).toEqual([[{ token: "alice-token" }], [{ token: "bob-token" }]]);
+  expect(session.adopt(configFor(login))).toBe(login === "alice");
+  if (login === "alice") {
+    await controllers.account.settle();
+    expect(controllers.account).not.toBe(old);
+    expect([controllers.account.state.view?.login, read.mock.calls]).toEqual(["alice", [[{ token: "alice-token" }], [{ token: "alice-renewed-token" }]]]);
+  } else {
+    expect(controllers.account).toBe(old);
+    expect([session.state.reloadRequired?.actionLabel, await old.load(), read.mock.calls]).toEqual(["Reload", null, [[{ token: "alice-token" }]]]);
+  }
 });
 it("group disposal fences every form before a sibling's original read finishes draining", async () => {
   const f = fixture({ resolve: async () => "proceed" }), page = f.controllers.account;
