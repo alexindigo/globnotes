@@ -34,13 +34,20 @@ export interface ProvisioningReceipt {
   readonly level: "none" | "view" | "edit" | "admin";
   readonly aclUpdateId: string;
 }
+export interface ProvisioningFailure {
+  readonly operationId: string;
+  readonly actorId: string;
+  readonly vaultId: string;
+  readonly committed: false;
+}
+export type ProvisioningOutcome = ProvisioningReceipt | ProvisioningFailure;
 export interface AccountState {
   readonly version: 1;
   readonly revision: number;
   readonly initialized: boolean;
   readonly updateId: string | null;
   readonly accounts: readonly Account[];
-  readonly provisioning: readonly ProvisioningReceipt[];
+  readonly provisioning: readonly ProvisioningOutcome[];
 }
 export type AccountSnapshot = IdentitySnapshot<AccountState>;
 export function normalizeLogin(value: string): string {
@@ -106,7 +113,21 @@ export function validateState(value: unknown): AccountState {
   const operations = new Set<string>();
   for (const receipt of value.provisioning) {
     if (
-      !record(receipt) ||
+      !record(receipt) || !identity(receipt.operationId) ||
+      !identity(receipt.vaultId) || !identity(receipt.actorId) ||
+      !accounts.some((a) => a.id === receipt.actorId) ||
+      operations.has(receipt.operationId)
+    ) throw new IdentityStateError();
+    operations.add(receipt.operationId);
+    if (receipt.committed === false) {
+      if (
+        !fields(receipt, ["operationId", "actorId", "vaultId", "committed"])
+      ) {
+        throw new IdentityStateError();
+      }
+      continue;
+    }
+    if (
       !fields(receipt, [
         "operationId",
         "actorId",
@@ -116,17 +137,13 @@ export function validateState(value: unknown): AccountState {
         "committed",
         "level",
         "aclUpdateId",
-      ]) || !identity(receipt.operationId) || !identity(receipt.actorId) ||
-      !identity(receipt.vaultId) || !identity(receipt.accountId) ||
+      ]) || !identity(receipt.accountId) ||
       !accounts.some((a) => a.id === receipt.accountId) ||
-      !accounts.some((a) => a.id === receipt.actorId) ||
       receipt.committed !== true || !identity(receipt.aclUpdateId) ||
       !["none", "view", "edit", "admin"].includes(receipt.level as string) ||
       typeof receipt.payloadHash !== "string" ||
-      !/^[0-9a-f]{64}$/.test(receipt.payloadHash) ||
-      operations.has(receipt.operationId)
+      !/^[0-9a-f]{64}$/.test(receipt.payloadHash)
     ) throw new IdentityStateError();
-    operations.add(receipt.operationId);
   }
   return value as unknown as AccountState;
 }

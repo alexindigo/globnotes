@@ -81,9 +81,22 @@ it("unreadable creation outcome retains ID, rejects replay and resolves only by 
   expect(readCreation.mock.calls).toEqual([[createAccount.mock.calls[0][0].operationId, { token: "alice-token" }], [createAccount.mock.calls[0][0].operationId, { token: "alice-token" }]]); expect(createAccount).toHaveBeenCalledOnce();
 });
 it("conclusive noncommit preserves nonsecret choices, clears the password and permits an explicit renewed attempt", async () => {
-  const createAccount = vi.fn(async () => { throw Error("lost"); }), f = await fixture({ createAccount, readCreation: async operationId => ({ operationId, committed: false, settled: true }) });
+  const createAccount = vi.fn().mockRejectedValueOnce(Error("lost"))
+    .mockImplementationOnce(async ({ operationId }) => ({ operationId, accountId: "created", committed: true }));
+  const readCreation = vi.fn().mockRejectedValueOnce(Error("offline"))
+    .mockImplementationOnce(async operationId => ({ operationId, committed: false, settled: true }));
+  const f = await fixture({ createAccount, readCreation });
   await creating(f); f.controller.setField("level", "view"); await f.controller.submitDialog();
+  expect(f.controller.state.provisioningUnknown).toBe(true);
+  expect(await f.controller.reviewCreation()).toBe(false);
   expect(f.controller.state).toMatchObject({ login: "jordan", level: "view", temporaryPassword: "", provisioningUnknown: false }); expect(createAccount).toHaveBeenCalledOnce();
+  f.controller.cancelDialog();
+  expect(f.controller.state.dialog).toBeNull();
+  await creating(f);
+  expect(await f.controller.submitDialog()).toBe(true);
+  const [failedId, renewedId] = createAccount.mock.calls.map(([data]) => data.operationId);
+  expect(renewedId).not.toBe(failedId);
+  expect(readCreation.mock.calls).toEqual([[failedId, { token: "alice-token" }], [failedId, { token: "alice-token" }]]);
 });
 it.each(["ordinary", "self-demotion"])("a synchronous preflight failure leaves the %s draft retryable", async kind => {
   const beforeCommit = vi.fn().mockImplementationOnce(() => { throw Error("preflight failed"); }).mockReturnValue(true);

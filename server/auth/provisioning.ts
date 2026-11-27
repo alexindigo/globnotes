@@ -6,7 +6,7 @@ import { OperationError } from "../plugins/errors.ts";
 import { createOperationLease } from "../operation_lease.ts";
 import type { VaultAccess } from "./access.ts";
 import { type AccessLevel, isAccessLevel } from "./acl.ts";
-import { normalizeLogin } from "./accounts.ts";
+import { type AccountRepository, normalizeLogin } from "./accounts.ts";
 import { bindAccountPreparationAuthority } from "./internal/account_credentials.ts";
 import {
   fields,
@@ -25,6 +25,29 @@ import type {
   IdentityParticipants,
   IdentityTransaction,
 } from "./transaction.ts";
+import { IdentityTransactionUnavailable } from "./transaction_outcome.ts";
+
+type Terminal = ReturnType<
+  AccountRepository["capture"]
+>["value"]["provisioning"][number];
+interface Pending {
+  readonly actorId: string;
+  readonly vaultId: string;
+  readonly waiters: Set<() => void>;
+  unavailable?: IdentityTransactionUnavailable;
+}
+type Operation =
+  | { state: "unknown" }
+  | { state: "pending"; pending: Pending }
+  | { state: "committed"; receipt: Extract<Terminal, { committed: true }> }
+  | { state: "failed"; receipt: Extract<Terminal, { committed: false }> };
+
+// A repository's durable receipt IDs are instance-wide, so its pending IDs
+// must share that same namespace across all of its vault workflows.
+const pendingByRepository = new WeakMap<
+  AccountRepository,
+  Map<string, Pending>
+>();
 
 interface ProvisioningInput {
   readonly login: string;
@@ -84,22 +107,17 @@ function capture(input: unknown): ProvisioningInput {
 export class AccountProvisioning {
   readonly access: VaultAccess;
   readonly #transaction: IdentityTransaction;
-  /** Work owns its slot until settlement. Aborted callers remove only their
-   * subscription, without leaving a reaction on the shared operation. */
-  readonly #pending = new Map<
-    string,
-    { actorId: string; waiters: Set<() => void> }
-  >();
+  readonly #pending: Map<string, Pending>;
   constructor(access: VaultAccess, transaction: IdentityTransaction) {
     this.access = access;
     this.#transaction = transaction;
+    const accounts = access.authority.sessions.accounts;
+    this.#pending = pendingByRepository.get(accounts) ?? new Map();
+    pendingByRepository.set(accounts, this.#pending);
   }
-  #join(operationId: string, signal?: AbortSignal, actorId?: string) {
+  #join(pending: Pending, signal?: AbortSignal) {
     signal?.throwIfAborted();
-    const pending = this.#pending.get(operationId);
-    if (!pending || actorId !== undefined && pending.actorId !== actorId) {
-      return;
-    }
+    if (pending.unavailable) throw pending.unavailable;
     const { waiters } = pending;
     return new Promise<void>((resolve, reject) => {
       const settle = () => {
@@ -121,16 +139,78 @@ export class AccountProvisioning {
   ) {
     const actor = this.access.admit(principal).principal as AccountPrincipal;
     const data = capture(input);
-    let prior;
-    while ((prior = this.#join(data.operationId, signal))) await prior;
-    const waiters = new Set<() => void>();
-    this.#pending.set(data.operationId, { actorId: actor.accountId, waiters });
+    const { operationId } = data;
+    signal?.throwIfAborted();
+    let operation = this.#operation(operationId);
+    if (operation.state === "pending") {
+      if (!this.#owns(actor, operation.pending)) {
+        throw new StoredConfigConflict();
+      }
+      await this.#join(operation.pending, signal);
+      operation = this.#operation(operationId);
+      // Joiners can observe a terminal result, never become the worker.
+      if (operation.state === "unknown" || operation.state === "pending") {
+        throw new IdentityTransactionUnavailable();
+      }
+    }
+    if (operation.state !== "unknown") {
+      const { receipt } = operation;
+      if (!this.#owns(actor, receipt)) throw new StoredConfigConflict();
+      if (!receipt.committed) {
+        throw new HttpError(
+          409,
+          "This account creation failed; use a new operation ID.",
+        );
+      }
+      const admin = this.access.admit(actor);
+      const hash = await this.#payloadHash(actor, data);
+      admin.assertCurrent(operationId);
+      if (receipt.payloadHash === hash) {
+        return this.#acknowledge(actor, operationId, receipt.accountId, signal);
+      }
+      throw new StoredConfigConflict();
+    }
+    const pending: Pending = {
+      actorId: actor.accountId,
+      vaultId: this.access.vault.id,
+      waiters: new Set(),
+    };
+    this.#pending.set(operationId, pending);
     try {
       return await this.#create(actor, data, signal);
+    } catch (error) {
+      // Neither an unreadable store nor a decision awaiting recovery proves
+      // failure. Retain the slot and never hand it to a queued POST.
+      try {
+        this.#transaction.assertReady();
+        if (
+          !readAuthorityState((context) => this.#receipt(operationId, context))
+        ) {
+          this.#transaction.recordProvisioningFailure(
+            {
+              operationId,
+              actorId: pending.actorId,
+              vaultId: pending.vaultId,
+              committed: false,
+            },
+          );
+        }
+      } catch (cause) {
+        pending.unavailable = error instanceof IdentityTransactionUnavailable
+          ? error
+          : new IdentityTransactionUnavailable({
+            cause: new AggregateError(
+              [error, cause],
+              "Provisioning outcome unavailable.",
+            ),
+          });
+        throw pending.unavailable;
+      }
+      throw error;
     } finally {
-      this.#pending.delete(data.operationId);
-      for (const settle of waiters) settle();
-      waiters.clear();
+      if (!pending.unavailable) this.#pending.delete(operationId);
+      for (const settle of pending.waiters) settle();
+      pending.waiters.clear();
     }
   }
   /** Keyed by the signing secret: receipts never hold the password or an
@@ -165,6 +245,26 @@ export class AccountProvisioning {
       .provisioning
       .find((receipt) => receipt.operationId === operationId);
   }
+  #owns(
+    principal: AccountPrincipal,
+    owner: { actorId: string; vaultId: string },
+  ) {
+    return owner.actorId === principal.accountId &&
+      owner.vaultId === this.access.vault.id;
+  }
+  #operation(operationId: string): Operation {
+    this.#transaction.assertReady();
+    const receipt = readAuthorityState((context) =>
+      this.#receipt(operationId, context)
+    );
+    if (receipt) {
+      return receipt.committed
+        ? { state: "committed", receipt }
+        : { state: "failed", receipt };
+    }
+    const pending = this.#pending.get(operationId);
+    return pending ? { state: "pending", pending } : { state: "unknown" };
+  }
   async #create(
     actor: AccountPrincipal,
     data: ProvisioningInput,
@@ -176,22 +276,6 @@ export class AccountProvisioning {
     const vaultId = this.access.vault.id;
     const payloadHash = await this.#payloadHash(actor, data);
     admin.assertCurrent(data.operationId);
-    const previous = readAuthorityState((context) =>
-      this.#receipt(data.operationId, context)
-    );
-    if (previous) {
-      // Historical completion only: no reset, no grant reapplication.
-      if (
-        previous.actorId !== actor.accountId || previous.vaultId !== vaultId ||
-        previous.payloadHash !== payloadHash
-      ) throw new StoredConfigConflict();
-      return this.#acknowledge(
-        actor,
-        data.operationId,
-        previous.accountId,
-        signal,
-      );
-    }
     const expected = acl.capture();
     const view = await acl.view();
     if (view.revision !== data.revision || view.signature !== data.signature) {
@@ -292,8 +376,7 @@ export class AccountProvisioning {
       "content-type": "application/json",
       "cache-control": "no-store",
     });
-    // An absence sampled without observing admission is never proof that the
-    // POST has finished. Keep the receipt body unchanged for status readers.
+    // Only a durable terminal outcome qualifies the existing receipt body.
     if (settled) headers.set("globnotes-creation-settled", "true");
     return new Response(body, { headers });
   }
@@ -310,27 +393,29 @@ export class AccountProvisioning {
       throw new HttpError(422, "Invalid operation identity.");
     }
     sessions.assertCurrent(principal);
-    let prior, settled = false;
-    while ((prior = this.#join(operationId, signal, principal.accountId))) {
-      await prior;
-      settled = true;
-    }
-    this.#transaction.assertReady();
-    const receipt = readAuthorityState((context) =>
-      this.#receipt(operationId, context)
-    );
+    let operation = this.#operation(operationId);
     if (
-      receipt?.actorId === principal.accountId &&
-      receipt.vaultId === this.access.vault.id
+      operation.state === "pending" && this.#owns(principal, operation.pending)
+    ) {
+      await this.#join(operation.pending, signal);
+      operation = this.#operation(operationId);
+      if (operation.state === "pending") {
+        throw operation.pending.unavailable ??
+          new IdentityTransactionUnavailable();
+      }
+    }
+    if (
+      operation.state === "committed" &&
+      this.#owns(principal, operation.receipt)
     ) {
       return {
         body: this.#acknowledge(
           principal,
           operationId,
-          receipt.accountId,
+          operation.receipt.accountId,
           signal,
         ),
-        settled: false,
+        settled: true,
       };
     }
     const snapshot = sessions.accounts.capture();
@@ -346,7 +431,11 @@ export class AccountProvisioning {
         sessions.accounts.assertUnchanged(snapshot);
       },
     );
-    return { body, settled };
+    return {
+      body,
+      settled: operation.state === "failed" &&
+        this.#owns(principal, operation.receipt),
+    };
   }
   #acknowledge(
     actor: AccountPrincipal,
@@ -366,7 +455,7 @@ export class AccountProvisioning {
       (context) => {
         const receipt = this.#receipt(operationId, context);
         if (
-          receipt?.accountId !== accountId ||
+          !receipt?.committed || receipt.accountId !== accountId ||
           receipt.actorId !== actor.accountId || receipt.vaultId !== vaultId
         ) throw new StoredConfigConflict();
       },

@@ -36,6 +36,8 @@ import {
   parseDenseArray,
   record,
 } from "./records.ts";
+import { IdentityTransactionUnavailable } from "./transaction_outcome.ts";
+export { IdentityTransactionUnavailable } from "./transaction_outcome.ts";
 
 export interface IdentityDecision {
   readonly kind: "setup" | "create-and-add";
@@ -56,15 +58,6 @@ export interface IdentityParticipants {
   readonly access: PublicationParticipant;
   discard(): void;
 }
-export class IdentityTransactionUnavailable extends Error {
-  constructor(options?: ErrorOptions) {
-    super(
-      "Identity publication requires recovery; no partial state is available.",
-      options,
-    );
-  }
-}
-
 const ownedRoots = new Set<string>();
 
 /** Construct and recover before exposing the repositories to normal consumers.
@@ -175,6 +168,16 @@ export class IdentityTransaction {
   #assertLiveCall(lease: OperationLease<"live">): void {
     assertOperationLease(lease, "live");
     this.assertReady();
+  }
+  recordProvisioningFailure(
+    failure: Parameters<AccountRepository["recordProvisioningFailure"]>[0],
+  ): void {
+    if (failure.vaultId !== this.#acl.vaultId) throw new IdentityStateError();
+    this.#accounts.recordProvisioningFailure(
+      failure,
+      this.#lease,
+      this.assertReady,
+    );
   }
   #stage<T>(run: () => T): T {
     this.#staging++;

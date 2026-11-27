@@ -268,10 +268,13 @@ retry requires current Admin on the same vault and acknowledges the original
 account without resetting its password or restoring a later-removed grant. A
 demoted actor who is still signed in can use the actor-bound status read with
 the original operation ID to recover that acknowledgment without Admin.
-Changed payloads, another actor or vault and existing logins conflict. Receipts
-keep a keyed payload identity, never the temporary password or its unkeyed
-digest. A known-ID status read waits for the admitted operation to settle; a
-missing receipt while it hashes is not failure.
+Changed payloads, another actor or vault and existing logins conflict. Committed
+receipts keep a keyed payload identity, never the temporary password or its
+unkeyed digest. A status read joins its actor's admitted operation. Only a durable
+commit or terminal failure sets `globnotes-creation-settled: true`; an unknown
+ID has no settlement marker. A failed ID records only the operation, actor and
+vault in the same store as committed receipts. It cannot commit on reuse, even
+after restart: a new explicit creation uses a new ID.
 An aborted retry or status request stops waiting without cancelling the admitted
 operation. Unresolved publication reports unavailable state, never a false
 noncommit. If staged writes cannot be discarded before the journal is written,

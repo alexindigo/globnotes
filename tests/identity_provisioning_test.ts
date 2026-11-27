@@ -35,6 +35,30 @@ import {
 const UNAVAILABLE =
   "Publication set is unavailable; settlement or recovery is required.";
 const CONFLICT = "Stored configuration changed before commit.";
+const FAILED_ID = "This account creation failed; use a new operation ID.";
+
+function failedReceipt(f: IdentityWorkflows, operationId: string) {
+  return {
+    operationId,
+    actorId: f.alice.id,
+    vaultId: f.vault.id,
+    committed: false,
+  };
+}
+
+function withFailedReceipt(
+  f: IdentityWorkflows,
+  raw: string,
+  operationId: string,
+) {
+  const before = JSON.parse(raw);
+  return {
+    ...before,
+    revision: before.revision + 1,
+    updateId: operationId,
+    provisioning: [...before.provisioning, failedReceipt(f, operationId)],
+  };
+}
 const CHANGED =
   "Access policy changed while this operation was pending; it was not applied.";
 let interrupt = false;
@@ -302,7 +326,11 @@ for (const failure of ["demotion", "external", "cancel"] as const) {
           );
         }
         assertEquals(f.accounts.byLogin("recipient"), null);
-        assertEquals(bytes(f), [accounts, acl]);
+        const [accountBytes, aclBytes] = bytes(f);
+        assertEquals([JSON.parse(accountBytes), aclBytes], [
+          withFailedReceipt(f, accounts, input.operationId),
+          acl,
+        ]);
         f.transaction.assertReady();
       });
     }, { hashing: () => hold?.() });
@@ -404,11 +432,12 @@ Deno.test("provisioning: changed payload/initiator/target and existing login can
       StoredConfigConflict,
       CONFLICT,
     );
+    const staleId = createUuid(), duplicateLoginId = createUuid();
     await assertRejects(
       () =>
         f.provisioning.createAndAdd(f.a, {
           ...input,
-          operationId: createUuid(),
+          operationId: staleId,
         }),
       StoredConfigConflict,
       CONFLICT,
@@ -422,13 +451,22 @@ Deno.test("provisioning: changed payload/initiator/target and existing login can
         f.provisioning.createAndAdd(f.a, {
           ...input,
           login: "bob",
-          operationId: createUuid(),
+          operationId: duplicateLoginId,
         }),
       StoredConfigConflict,
       CONFLICT,
     );
     assertEquals(f.accounts.byId(f.bob.id)?.credentialRevision, 0);
-    assertEquals(f.accounts.capture().value.provisioning.length, 1);
+    assertEquals(
+      f.accounts.capture().value.provisioning.map((
+        r,
+      ) => [r.operationId, r.committed]),
+      [
+        [input.operationId, true],
+        [staleId, false],
+        [duplicateLoginId, false],
+      ],
+    );
 
     const acl = new AclRepository(`${f.root}/second-vault`, VAULT_B, {
       accounts: f.accounts,
@@ -536,10 +574,11 @@ for (const winner of ["primary", "contender"] as const) {
             [error.constructor, error.status, error.code, error.operationId],
             [OperationError, 409, "operation_conflict", losing.operationId],
           );
-          assertEquals(
-            [duplicate.reason.constructor, duplicate.reason.message],
-            [StoredConfigConflict, CONFLICT],
-          );
+          assertEquals([
+            duplicate.reason.constructor,
+            duplicate.reason.status,
+            duplicate.reason.detail,
+          ], [HttpError, 409, FAILED_ID]);
         }
         assertEquals(observed?.result, {
           account: {
@@ -559,15 +598,29 @@ for (const winner of ["primary", "contender"] as const) {
           [...before.accounts.map((a) => a.login), "recipient"],
         );
         assertEquals(
-          saved.provisioning.map((r) => [r.operationId, r.accountId, r.level]),
-          [[winning.operationId, account.id, "edit"]],
+          saved.provisioning.map((r) =>
+            r.committed
+              ? [r.operationId, r.accountId, r.level]
+              : [r.operationId, r.actorId, r.vaultId, false]
+          ),
+          [[winning.operationId, account.id, "edit"], [
+            losing.operationId,
+            f.alice.id,
+            f.vault.id,
+            false,
+          ]],
         );
         assertEquals(account.credentialRevision, 1);
         assertEquals(f.acl.capture().value.grants, {
           [f.alice.id]: "admin",
           [account.id]: "edit",
         });
-        assertEquals(bytes(f), observed?.bytes);
+        const [storedAccounts, storedAcl] = bytes(f);
+        const [priorAccounts, priorAcl] = observed!.bytes;
+        assertEquals([JSON.parse(storedAccounts), storedAcl], [
+          withFailedReceipt(f, priorAccounts, losing.operationId),
+          priorAcl,
+        ]);
 
         const restarted = await f.restart();
         assertEquals(
@@ -900,10 +953,10 @@ Deno.test("provisioning: outcome waits for admitted hash settlement, then remain
   }, { hashing: () => hold?.() });
 });
 
-Deno.test("provisioning: only a negative receipt that joined the actor's admitted request proves settlement", () => {
+Deno.test("provisioning: a queued duplicate cannot commit after a joined review reports terminal noncommit", () => {
   let hold: (() => Promise<void>) | undefined;
   return identityWorkflowFixture(async (f) => {
-    const input = await request(f), before = bytes(f);
+    const input = await request(f);
     const read = async (response: Response) => [
       response.status,
       await response.json(),
@@ -937,6 +990,11 @@ Deno.test("provisioning: only a negative receipt that joined the actor's admitte
         absent,
         null,
       ]);
+      // Register the receipt first, so it resumes before the same-ID POST.
+      const duplicate = f.provisioning.createAndAdd(f.a, input).then(
+        async (body) => ({ committed: await f.read(body) }),
+        (error: HttpError) => ({ refused: [error.status, error.detail] }),
+      );
       abort.abort(refusal);
       await operation.result();
       assertEquals(await bounded(own.then(read), "own settled receipt"), [
@@ -944,7 +1002,70 @@ Deno.test("provisioning: only a negative receipt that joined the actor's admitte
         absent,
         "true",
       ]);
+      assertEquals(await bounded(duplicate, "queued create"), {
+        refused: [409, FAILED_ID],
+      });
+      assertEquals(
+        await read(await f.provisioning.reviewResponse(f.a, input.operationId)),
+        [200, absent, "true"],
+      );
     });
-    assertEquals(bytes(f), before);
+    assertEquals(f.accounts.byLogin(input.login), null);
   }, { hashing: () => hold?.() });
 });
+
+Deno.test("provisioning: a lost failed reply stays settled across restart, and a new ID can retry", () =>
+  identityWorkflowFixture(async (f) => {
+    const input = await request(f);
+    await assertRejects(
+      () => f.provisioning.createAndAdd(f.a, { ...input, signature: "stale" }),
+      StoredConfigConflict,
+      CONFLICT,
+    );
+    const restarted = await f.restart();
+    const result = await restarted.provisioning.reviewResponse(
+      restarted.a,
+      input.operationId,
+    );
+    assertEquals([
+      result.status,
+      await result.json(),
+      result.headers.get("globnotes-creation-settled"),
+    ], [
+      200,
+      { operationId: input.operationId, committed: false },
+      "true",
+    ]);
+    const retry = await assertRejects(
+      () => restarted.provisioning.createAndAdd(restarted.a, input),
+      HttpError,
+      "HTTP 409",
+    );
+    assertEquals([retry.status, retry.detail], [409, FAILED_ID]);
+    assertEquals(restarted.accounts.byLogin(input.login), null);
+    const next = { ...input, operationId: createUuid() };
+    const committed = await restarted.read(
+      restarted.provisioning.createAndAdd(restarted.a, next),
+    );
+    const accountId = restarted.accounts.byLogin(input.login)!.id;
+    assertEquals(committed, {
+      operationId: next.operationId,
+      accountId,
+      committed: true,
+    });
+    const receipt = await restarted.provisioning.reviewResponse(
+      restarted.a,
+      next.operationId,
+    );
+    assertEquals([
+      await receipt.json(),
+      receipt.headers.get("globnotes-creation-settled"),
+    ], [committed, "true"]);
+    assertEquals(
+      await restarted.read(
+        restarted.provisioning.createAndAdd(restarted.a, next),
+      ),
+      committed,
+    );
+    assertEquals(restarted.acl.capture().value.grants[accountId], "edit");
+  }));

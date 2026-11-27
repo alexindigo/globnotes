@@ -27,6 +27,7 @@ import {
   type AccountSnapshot,
   type AccountState,
   normalizeLogin,
+  type ProvisioningFailure,
   validateAccount,
   validateState,
 } from "./internal/account_record.ts";
@@ -275,6 +276,32 @@ export class AccountRepository {
   assertUnchanged(expected = this.capture()): void {
     if (expected !== this.capture()) throw new StoredConfigConflict();
     this.#file.assertUnchanged(this.#directory!.stored);
+  }
+  /** Terminal failure has the same store lifetime as a committed receipt. It
+   * changes only receipt metadata, never credentials or the vault ACL. */
+  recordProvisioningFailure(
+    failure: ProvisioningFailure,
+    lease: OperationLease<"live">,
+    assertReady: () => void,
+  ): void {
+    assertReady();
+    const expected = this.#file.capture();
+    if (
+      expected.value.provisioning.some((outcome) =>
+        outcome.operationId === failure.operationId
+      )
+    ) throw new StoredConfigConflict();
+    this.#file.commit(
+      {
+        ...expected.value,
+        revision: expected.value.revision + 1,
+        updateId: failure.operationId,
+        provisioning: [...expected.value.provisioning, failure],
+      },
+      expected,
+      assertReady,
+      [lease],
+    );
   }
   prepareParents(): void {
     this.#file.prepareParents();

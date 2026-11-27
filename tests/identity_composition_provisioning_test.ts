@@ -90,7 +90,7 @@ Deno.test("identity composition: live Admin can publish an account and grant thr
     assertEquals(
       f.accounts.capture().value.provisioning.map((receipt) => ({
         operationId: receipt.operationId,
-        accountId: receipt.accountId,
+        accountId: receipt.committed ? receipt.accountId : null,
         committed: receipt.committed,
       })),
       [{ operationId: OPERATION, accountId: recipient!.id, committed: true }],
