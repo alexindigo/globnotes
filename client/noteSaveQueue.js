@@ -168,9 +168,10 @@ export function createNoteSaveQueue(adapters) {
         acknowledgedPathRevision = snapshot.pathRevision;
         const holdQueued = result.saveResult?.status !== "conflict" && context.sourcePath && context.sourcePath !== result.path && snapshot.content !== result.content && queued.length > 0;
         job.phase = "acknowledging";
+        const acknowledgement = job.acknowledgement = new AbortController();
         const late = job.timedOut;
         let integration, integrationFailure;
-        try { integration = await adapters.acknowledge?.(snapshot, result, { ...context, late }); }
+        try { integration = await adapters.acknowledge?.(snapshot, result, { ...context, late, signal: acknowledgement.signal }); }
         catch (error) { integrationFailure = { error }; }
         finally { await release(job); }
         if (!job.current()) break;
@@ -262,7 +263,7 @@ export function createNoteSaveQueue(adapters) {
     discard() {
       if (disposed || !state().canDiscard) return false;
       lifetime.advanceProjection();
-      for (const job of [active, ...queued].filter(Boolean)) { clearTimer(job.observationTimer); finishReceipt(job, { status: "discarded", safe: true }); }
+      for (const job of [active, ...queued].filter(Boolean)) { job.acknowledgement?.abort(); clearTimer(job.observationTimer); finishReceipt(job, { status: "discarded", safe: true }); }
       pumping = false;
       baseContent = acknowledged?.content;
       active = null; queued.length = 0; jobs.clear(); failure = null; rebaseConflict = false; status = "idle"; notify();
@@ -271,7 +272,7 @@ export function createNoteSaveQueue(adapters) {
     dispose() {
       if (disposed) return;
       disposed = true; lifetime.dispose();
-      for (const job of jobs) { clearTimer(job.observationTimer); finishReceipt(job, { status: "disposed", safe: false }); }
+      for (const job of jobs) { job.acknowledgement?.abort(); clearTimer(job.observationTimer); finishReceipt(job, { status: "disposed", safe: false }); }
       for (const waiter of [...waiters]) waiter.finish({ status: "disposed", safe: false });
     },
   };

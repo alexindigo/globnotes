@@ -16,8 +16,7 @@ export function createNoteSaveOwner({
   ownerId,
   getState,
   capture = () => bindContext(() => true, () => getState().identity),
-  captureAfterAuthentication = capture,
-  canSettleRetiredSave = () => false,
+  waitForAuthority = () => null,
   getBuffer,
   isContentChanged,
   applyNote,
@@ -49,13 +48,15 @@ export function createNoteSaveOwner({
   let editSession = 0;
   let pendingRenamePrompt = null;
   let authentication = null;
-  let routeResult, sessionLifetime = null, ownerScope, authority = null, disposed = false;
+  let routeResult, sessionLifetime = null, ownerScope, disposed = false;
   const sent = new WeakMap();
   const pendingDrafts = new Map();
   const readOwnerScope = () => { const state = getState(); return state.ownerScope ?? state.identity; };
-  const captureAuthority = current => bindContext(current, () => sessionLifetime, () => getState().canEdit !== false);
-  const identityCurrent = () => !!authority?.() && getState().canEdit !== false;
-  const requireIdentity = () => { if (!identityCurrent()) throw retiredContext(); };
+  const captureAuthority = () => {
+    const current = capture();
+    return bindContext(() => !!sessionLifetime && readOwnerScope() === ownerScope && getState().canEdit !== false && current(), () => sessionLifetime);
+  };
+  const hasAuthority = () => captureAuthority()();
   const operations = createOperationOwner({ owner: Object.freeze({ ownerId }),
     prepare: intent => ({ value: { ...intent } }),
     dispatch: intent => intent.sourcePath ? update(intent.sourcePath, intent.targetPath, intent.content, intent.fileRefs, intent.baseContent) : create(intent.targetPath, intent.content),
@@ -101,8 +102,8 @@ export function createNoteSaveOwner({
   }
 
   async function prepare(snapshot, context) {
-    const current = authority;
-    const isCurrent = () => context.isPreparationCurrent() && current?.();
+    const current = captureAuthority();
+    const isCurrent = () => context.isPreparationCurrent() && current();
     const requireCurrent = () => {
       if (!isCurrent()) throw new Error("Obsolete attachment preparation abandoned.");
     };
@@ -111,7 +112,7 @@ export function createNoteSaveOwner({
     const refs = await preview(context.sourcePath, context.targetPath);
     requireCurrent();
     if (!Array.isArray(refs)) throw new Error("Invalid rename preview; no write was sent.");
-    if (!refs.length) return { fileRefs: "none" };
+    if (!refs.length) return { fileRefs: "none", current };
     // The modal only echoes this token. Queue handles and currentness checks
     // stay private to the owner, so a view cannot bypass its intent methods.
     const identity = Object.freeze({ sessionId: snapshot.sessionId, jobId: snapshot.submissionId });
@@ -122,19 +123,23 @@ export function createNoteSaveOwner({
       notify();
     });
     requireCurrent();
-    return { fileRefs };
+    return { fileRefs, current };
   }
 
   async function acknowledge(snapshot, result, context) {
     const original = sent.get(snapshot), own = operations;
     const { operation } = original;
-    // A same-resource receipt that only echoes the submitted bytes can settle
-    // the original FIFO without delivering any retired projection effects.
-    if (!identityCurrent() && snapshot.intent === "save" && context.sourcePath === result.path &&
-        snapshot.content === result.content && readOwnerScope() === ownerScope && canSettleRetiredSave()) {
-      return { baseContent: snapshot.content };
+    // Wire custody stays with the sending operation. Deliver its receipt under
+    // live authority for the same editor, without releasing the FIFO early.
+    let delivery = captureAuthority();
+    while (!delivery() && !context.signal.aborted) {
+      const renewed = waitForAuthority(context.signal);
+      if (!renewed) break;
+      await renewed;
+      delivery = captureAuthority();
     }
-    const effect = (name, ...args) => { if (!own.deliver(operation, name, args)) throw retiredContext(); };
+    const currentDelivery = () => !context.signal.aborted && delivery();
+    const effect = (name, ...args) => { if (!own.deliver(operation, name, args, currentDelivery)) throw retiredContext(); };
     effect("draft", pendingDrafts.get(snapshot.submissionId));
     const newer = queue.state().queued;
     const current = getState();
@@ -172,7 +177,7 @@ export function createNoteSaveOwner({
 
   function clearAcknowledgedDrafts(snapshot) {
     if (drafts.captureAcknowledgement) return;
-    if (!identityCurrent() || isContentChanged() || queue.state().unresolved) return;
+    if (!hasAuthority() || isContentChanged() || queue.state().unresolved) return;
     withDraftStorage(() => drafts.clearAcknowledged(snapshot.draftRevision));
   }
 
@@ -182,7 +187,7 @@ export function createNoteSaveOwner({
   }
 
   function persistDraft(content = getBuffer(), current = getState()) {
-    if (!identityCurrent()) return;
+    if (!hasAuthority()) return;
     // An unadmitted rename target may already hold another editor's draft.
     // Store this edit at its acknowledged path until the rename commits.
     const path = drafts.captureAcknowledgement ? queue?.state().acknowledged?.path ?? current.requestedPath : current.requestedPath;
@@ -199,7 +204,6 @@ export function createNoteSaveOwner({
     const sessionId = `${ownerId}:${++editSession}`;
     sessionLifetime = Object.freeze({});
     ownerScope = readOwnerScope();
-    authority = captureAuthority(capture());
     pendingDrafts.clear();
     queue = createNoteSaveQueue({
       sessionId,
@@ -213,7 +217,9 @@ export function createNoteSaveOwner({
       },
       prepare,
       send: async (snapshot, context, preparation) => {
-        requireIdentity();
+        preparation.current?.assert();
+        const authority = captureAuthority();
+        authority.assert();
         const own = operations, operation = own.operation("outcome", authority);
         sent.set(snapshot, { operation });
         const response = await own.dispatch(operation, { sourcePath: context.sourcePath, targetPath: context.targetPath,
@@ -225,9 +231,9 @@ export function createNoteSaveOwner({
       cleanupFailed: error => console.error("Save cleanup failed", error),
       failed: (error, _, failure) => {
         if (failure?.authenticationRequired) recoverAuthentication(failure);
-        else if (identityCurrent()) failed(error);
+        else if (hasAuthority()) failed(error);
       },
-      canResolveLate: (_, result) => identityCurrent() && getBuffer() === result.content && getState().requestedPath === result.path,
+      canResolveLate: (_, result) => hasAuthority() && getBuffer() === result.content && getState().requestedPath === result.path,
       drained: clearAcknowledgedDrafts,
     });
     queueSnapshot = queue.state();
@@ -236,7 +242,7 @@ export function createNoteSaveOwner({
   }
 
   function submit(intent, attachmentPolicy) {
-    if (!queue) return null;
+    if (!queue || !hasAuthority()) return null;
     const current = getState();
     const titleError = notePathError(current.requestedPath);
     if (titleError) {
@@ -309,15 +315,11 @@ export function createNoteSaveOwner({
       if (authentication !== own) return;
       authentication = null;
       if (!accepted || !stillPaused()) return;
-      // This checked, pre-write rejection alone can acquire renewed authority.
-      // Every earlier operation retains its own, now-retired capture.
-      const renewed = captureAfterAuthentication(own.scope);
-      if (!renewed?.() || !stillPaused() || getState().canEdit === false) return;
-      authority = captureAuthority(renewed);
+      if (!hasAuthority()) return;
       recoveringQueue.resumeAfterAuthentication(own.serial);
     }).catch(error => {
       if (authentication === own) authentication = null;
-      if (stillPaused() && identityCurrent()) failed(error);
+      if (stillPaused() && hasAuthority()) failed(error);
     });
   }
 
@@ -345,6 +347,7 @@ export function createNoteSaveOwner({
   }
 
   function discard() {
+    if (readOwnerScope() !== ownerScope || queue?.state().active?.phase === "acknowledging" && !hasAuthority()) return false;
     if (!queue?.discard()) return false;
     drafts.clear();
     const base = queue.state().acknowledged ?? getState().note;
@@ -394,7 +397,6 @@ export function createNoteSaveOwner({
   }
 
   return { state, queueState: () => queue?.state(), persistDraft, start, reset, end, dispose,
-    adoptAuthority() { if (queue?.state().unresolved || getState().canEdit === false || readOwnerScope() !== ownerScope) return false; authority = captureAuthority(capture()); return true; },
     adopt: note => queue?.adopt(note) ?? false,
     observeBuffer,
     save, rename, latestSubmitted, contentNeedsSave, settle, discard, resolve, saveForNavigation, confirmRename, cancelRename, revokeRenamePrompt,

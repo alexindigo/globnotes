@@ -50,6 +50,8 @@ export function createIdentityNoteController({ session, prefix = readPathPrefix(
     } });
 }
 
+const legacySessionKey = () => null;
+
 /** Owns a mounted note's workflow. Views supply route/context readers, effects
  * and an editor port; all decisions and buffer ownership remain here. */
 export function createNoteController({
@@ -71,17 +73,20 @@ export function createNoteController({
   acquireChanges = acquireVaultChanges,
   failed = error => apiErrorHandler(error, toast),
   ownerId = createUuid(),
-  sessionKey = () => null,
+  sessionKey = legacySessionKey,
   canRead = () => true,
   captureSession,
   requestAuthentication,
   reloadRequired = () => false,
   ownerCurrent, rebindReader = () => false,
-  ownerScope = () => getContext().capabilities ? identityOwnerKey(getContext()) : sessionKey(),
+  ownerScope = () => getContext().principal ? identityOwnerKey(getContext()) : sessionKey(),
 }) {
-  const noteScope = ref(sessionKey());
+  const noteOwner = ref(ownerScope());
   const lifetime = createSessionContext({ key: sessionKey });
-  const canModify = computed(() => !reloadRequired() && noteScope.value === sessionKey() && (getContext().capabilities ? getContext().capabilities.canEdit === true : getContext().authType != authTypes.readOnly));
+  const hasLiveSession = () => sessionKey === legacySessionKey || sessionKey() != null;
+  const ownsNote = () => noteOwner.value === ownerScope();
+  const hasNoteAuthority = () => !reloadRequired() && hasLiveSession() && ownsNote();
+  const canModify = computed(() => hasNoteAuthority() && (getContext().capabilities ? getContext().capabilities.canEdit === true : getContext().authType != authTypes.readOnly));
   const editorReadOnly = computed(() => !!reloadRequired());
   const isNewNote = computed(() => !getContext().path);
   const editMode = ref(false);
@@ -164,11 +169,21 @@ export function createNoteController({
   let contentChangedTimeout = null, titleFollowTimer = null;
   let pendingNavTarget = null, pendingSessionDecision = null, pendingDecisionPromise = null;
   const resourceIdentity = computed(() => noteResourceIdentity(getContext().path, getContext().query));
-  const ownsNote = () => noteScope.value === sessionKey();
   const captureSessionLifetime = () => {
     const application = captureSession?.(), local = lifetime.capture();
-    return bindContext(() => local() && (application?.() ?? true), ownsNote);
+    return bindContext(() => hasNoteAuthority() && local() && (application?.() ?? true));
   };
+  // Only a temporary projection gap can defer delivery. A live replacement,
+  // loss of Edit, or an explicit reload leaves the receipt with its old FIFO.
+  const awaitingProjection = () => !reloadRequired() && !hasLiveSession();
+  function waitForSaveAuthority(signal) {
+    if (signal.aborted || !awaitingProjection()) return null;
+    return new Promise(resolve => {
+      const done = () => { stop(); signal.removeEventListener("abort", done); resolve(); };
+      const stop = watch(awaitingProjection, waiting => { if (!waiting) done(); }, { flush: "sync" });
+      signal.addEventListener("abort", done, { once: true });
+    });
+  }
   const captureNote = () => captureSessionLifetime().bind(() => resourceIdentity.value);
   const reads = createOperationOwner({ owner: Object.freeze({ ownerId }), dispatch: path => read(path),
   });
@@ -189,17 +204,8 @@ export function createNoteController({
   const saveOwner = saveOwnerFactory({
     ownerId,
     requestAuthentication,
-    canSettleRetiredSave: () => editMode.value && retainsNoteOwner(),
     capture: captureSessionLifetime,
-    captureAfterAuthentication: originalOwner => {
-      if (!editMode.value || ownerScope() !== originalOwner) return null;
-      if (getContext().capabilities) {
-        const key = sessionKey();
-        if (key == null || getContext().capabilities.canEdit !== true) return null;
-        noteScope.value = key;
-      }
-      return captureSessionLifetime();
-    },
+    waitForAuthority: waitForSaveAuthority,
     getState: () => ({ note: note.value, isNewNote: isNewNote.value, requestedPath: newPath.value,
       contentRevision: contentRevision.value, pathRevision: pathRevision.value, identity: sessionKey(), ownerScope: ownerScope(), canEdit: canModify.value }),
     getBuffer: currentBuffer, isContentChanged: isDirty,
@@ -226,9 +232,7 @@ export function createNoteController({
     publishTitle, setMovedFiles: files => { lastMovedFiles.value = files; },
     urlSync, updateRenamedLinks, drafts, requestDecision: requestNoteDecision,
     changed: state => {
-      const wasUnresolved = queueState.value.unresolved;
       saveOwnerState.value = state; queueState.value = state.queue;
-      if (wasUnresolved && !state.queue.unresolved) adoptNoteAuthority();
       if (pendingVaultEntry && !state.queue.inFlight && !["preparing", "sending"].includes(state.queue.status)) {
         const entry = pendingVaultEntry; pendingVaultEntry = null;
         const current = captureNote();
@@ -287,9 +291,9 @@ export function createNoteController({
   function onSourceSelection(line) { if (!editorReadOnly.value) { editorLine.value = line; urlSync.scheduleCaretSync(); } }
 
   function init() {
-    if (lifetime.disposed || editorReadOnly.value || !canRead()) return;
-    if (noteScope.value !== sessionKey() && (editMode.value || queueState.value.unresolved)) return;
-    noteScope.value = sessionKey();
+    if (lifetime.disposed || editorReadOnly.value || !hasLiveSession() || !canRead()) return;
+    if (!ownsNote() && (editMode.value || queueState.value.unresolved)) return;
+    noteOwner.value = ownerScope();
     if (urlSync.consumeAcknowledgedResource(getContext().path, saveOwner.queueState()?.sessionId)) return;
     clearEditTimers();
     saveOwner.reset();
@@ -563,7 +567,7 @@ export function createNoteController({
     else if (entry) onVaultChange(entry);
   }
   async function refreshFromVault() {
-    if (!ownsNote() || !canRead() || lifetime.disposed) return;
+    if (!hasNoteAuthority() || !canRead() || lifetime.disposed) return;
     const path = openVaultPath();
     if (!path) return;
     if (loadStatus.value === "loading") { pendingVaultReset = true; return; }
@@ -671,20 +675,11 @@ export function createNoteController({
     editorActionUnsubs.forEach(fn => fn()); editorActionUnsubs = [];
     return Promise.all([reads.dispose(), saving]);
   }
-  function retainsNoteOwner() {
-    return !reloadRequired() && ownerCurrent?.() && !lifetime.disposed;
-  }
-  function adoptNoteAuthority() {
-    const key = sessionKey();
-    if (key == null || key === noteScope.value || queueState.value.unresolved || !retainsNoteOwner() || getContext().capabilities?.canEdit !== true) return;
-    noteScope.value = key;
-    saveOwner.adoptAuthority();
-  }
   const stopIdentity = watch(sessionKey, () => {
     lifetime.advanceProjection(); externalRead = null; clearEditTimers();
+    saveOwner.revokeRenamePrompt();
     pendingVaultEntry = null; pendingVaultReset = false;
     if (ownerCurrent && !ownerCurrent() && !isDirty() && !queueState.value.unresolved && rebindReader()) editMode.value = false;
-    adoptNoteAuthority();
     if (!editMode.value && !queueState.value.unresolved) {
       note.value = {}; previewHtml.value = ""; loadStatus.value = "loading";
       if (mounted && sessionKey() != null) void init();

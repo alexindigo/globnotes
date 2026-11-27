@@ -240,43 +240,65 @@ describe("note workflow ownership", () => {
       expect(drafts.load("folder/P", 0)).toBe("Alice retained typing");
     } finally { await f.controller.dispose(); await session.dispose(); }
   });
-  it.each(["before", "after"])("a held save can settle %s renewal without silencing the next save", async order => {
+  it.each(["before", "after", "queued", "replacement", "disposed"])("a held save keeps its original owner across session renewal (%s)", async order => {
     vi.useRealTimers();
     const config = ref({ principal: { kind: "account", id: "alice", login: "alice" }, accountId: "alice", vaultId: "vault", sessionGeneration: "alice", authorityRevision: 0,
       capabilities: { canRead: true, canEdit: true } });
     const session = createIdentityAppSession({ config: () => config.value, setConfig: value => { config.value = value; },
       tokens: { getStoredToken: () => "alice-token", isCurrentTokenStored: () => false }, transport: {}, stopRuntime() {}, applyBrand() {} });
     session.adopt(config.value);
-    let hold;
-    const update = vi.fn().mockImplementationOnce(async () => { await hold(); return { path: "folder/P", content: "first" }; })
+    let hold, owner;
+    const update = vi.fn().mockImplementationOnce(async () => { await hold(); return { path: "folder/P", content: "saved first" }; })
       .mockImplementation(async (_source, path, content) => ({ path, content }));
-    const f = fixture({ createController: adapters => createIdentityNoteController({ session, prefix: "/held-save-renewal", ...adapters }),
+    const f = fixture({ createController: adapters => createIdentityNoteController({ session, prefix: `/held-save-renewal/${order}`, ...adapters }),
       getContext: () => ({ path: "folder/P", query: {}, capabilities: config.value.capabilities }),
-      saveOwnerFactory: options => createNoteSaveOwner({ ...options, update }) });
+      saveOwnerFactory: options => (owner = createNoteSaveOwner({ ...options, update })) });
     try {
       await f.controller.mount(); f.enter(); f.input("first");
       await heldOperation({ label: "original save", owner: () => f.controller, progress: { kind: "controlled", clock: "external" } },
         boundary => { hold = boundary; return f.controller.saveHandler().completion; }, async save => {
           await save.reached(); f.input("newer typing");
+          const queued = order === "queued" || order === "replacement" ? f.controller.saveHandler() : null;
           const renewed = { ...config.value, sessionGeneration: "renewed" };
-          if (order === "before") session.invalidate(); else session.adopt(renewed);
-          expect(f.controller.state.canModify).toBe(false);
-          expect(await save.result()).toMatchObject({ status: "acknowledged" });
-          expect(await f.participant().settlePending()).toBe(true);
-          if (order === "before") {
-            expect(f.controller.state.canModify).toBe(false);
-            session.adopt(renewed);
+          const saveFacts = () => f.adapters.publish.mock.calls.filter(([topic]) => topic === TOPICS.NOTE_SAVE);
+          if (order !== "after") {
+            session.invalidate(); save.release();
+            await vi.waitFor(() => expect(owner.queueState().acknowledged?.content).toBe("saved first"));
+            expect([f.controller.state.canModify, f.controller.state.note.content, f.controller.currentBuffer(), saveFacts()])
+              .toEqual([false, "Seed", "newer typing", []]);
+            expect(owner.queueState().active?.phase).toBe("acknowledging");
           }
-          expect([f.controller.state.canModify, f.controller.currentBuffer(), f.controller.isDirty()]).toEqual([true, "newer typing", true]);
-          expect(await f.controller.saveHandler().completion).toMatchObject({ status: "acknowledged" });
-          expect(update.mock.calls).toEqual([["folder/P", "folder/P", "first", "none", "Seed"], ["folder/P", "folder/P", "newer typing", "none", "first"]]);
+          if (order === "disposed") {
+            await f.controller.dispose();
+            expect(await save.result()).toEqual({ status: "disposed", safe: false });
+            expect(session.adopt(renewed)).toBe(true);
+            expect([f.controller.state.note.content, saveFacts()]).toEqual(["Seed", []]);
+            return;
+          }
+          if (order === "replacement") {
+            expect(session.adopt({ ...renewed, principal: { kind: "account", id: "bob", login: "bob" }, accountId: "bob" })).toBe(false);
+            expect(await save.result()).toMatchObject({ status: "acknowledged" });
+            expect([f.controller.state.editorReadOnly, f.controller.state.note.content, f.controller.currentBuffer(), f.controller.saveHandler(), saveFacts(), update.mock.calls])
+              .toEqual([true, "Seed", "newer typing", null, [], [["folder/P", "folder/P", "first", "none", "Seed"]]]);
+            return;
+          }
+          expect(session.adopt(renewed)).toBe(true);
+          expect(await save.result()).toMatchObject({ status: "acknowledged" });
+          if (!queued) {
+            expect([f.controller.state.canModify, f.controller.state.note.content, f.controller.currentBuffer(), f.controller.isDirty()])
+              .toEqual([true, "saved first", "newer typing", true]);
+          }
+          expect(await (queued ?? f.controller.saveHandler()).completion).toMatchObject({ status: "acknowledged" });
+          expect([f.controller.state.note.content, update.mock.calls]).toEqual(["newer typing", [
+            ["folder/P", "folder/P", "first", "none", "Seed"], ["folder/P", "folder/P", "newer typing", "none", "saved first"],
+          ]]);
         });
     } finally { await f.controller.dispose(); await session.dispose(); }
   });
   it("the same dirty note survives actual session outage and held reconnect revalidation", async () => {
     vi.useRealTimers();
     const config = ref({ principal: { kind: "account", id: "alice", login: "alice" }, accountId: "alice", vaultId: "vault", sessionGeneration: "alice", authorityRevision: 0, capabilities: { canRead: true, canEdit: true } });
-    const restored = { ...config.value, authorityRevision: 1 }; let session, hold, reads = 0;
+    const restored = { ...config.value }, originalKey = identitySessionKey(restored); let session, hold, reads = 0;
     const changes = createVaultChanges({ sessionKey: () => session.key() });
     session = createIdentityAppSession({ config: () => config.value, setConfig: value => { config.value = value; },
       tokens: { getStoredToken: () => "alice-token", isCurrentTokenStored: () => false }, transport: { getConfig: async () => {
@@ -293,6 +315,10 @@ describe("note workflow ownership", () => {
         await work.reached(); expect([session.state.valid, f.controller.currentBuffer(), f.controller.state.editMode, f.controller.state.canModify]).toEqual([false, "Retained through restart", true, false]);
         expect(await work.result()).toBe(false);
         expect([session.state.valid, f.controller.currentBuffer(), f.controller.state.editMode, f.controller.state.canModify, f.controller.isDirty(), f.adapters.read.mock.calls]).toEqual([true, "Retained through restart", true, true, true, [["folder/P"]]]);
+        expect(session.key()).toBe(originalKey);
+        updateNote.mockResolvedValueOnce({ path: "folder/P", content: "Retained through restart" });
+        expect(await f.controller.saveHandler().completion).toMatchObject({ status: "acknowledged" });
+        expect(updateNote.mock.calls).toEqual([["folder/P", "folder/P", "Retained through restart", "none", "Seed"]]);
       });
     } finally { await f.controller.dispose(); await session.dispose(); await changes.dispose(); }
   });
