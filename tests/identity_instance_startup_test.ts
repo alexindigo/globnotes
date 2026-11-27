@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import {
   assertEquals,
+  assertInstanceOf,
   assertRejects,
   assertStrictEquals,
   assertThrows,
@@ -20,7 +21,7 @@ import { transactionContext } from "./helpers/identity_transaction.ts";
 import { recoveryForRoot } from "./helpers/account_preparation.ts";
 import { signIn } from "./helpers/session_delivery.ts";
 import { heldOperation } from "./helpers/owned_operation.ts";
-import type { FixtureScope } from "./helpers/fixture_scope.ts";
+import { type FixtureScope, fixtureScope } from "./helpers/fixture_scope.ts";
 
 const release = { version: "fixture", revision: "startup" };
 const recovery =
@@ -49,10 +50,20 @@ function configuration(
     fixtureStatePath: `${root}/metadata/_/vault`,
   }));
 }
-async function opened(scope: FixtureScope, config: GlobalConfig) {
+async function opened(
+  scope: FixtureScope,
+  config: GlobalConfig,
+  options?: Parameters<typeof openInstanceIdentity>[3],
+) {
   return (await scope.acquire(
-    () => openInstanceIdentity(config, plugins, release),
+    () => openInstanceIdentity(config, plugins, release, options),
     (instance) => instance.close(),
+  )).value;
+}
+async function locked(scope: FixtureScope, root: string) {
+  return (await scope.acquire(
+    () => recoveryForRoot(root),
+    (owner) => owner.close(),
   )).value;
 }
 function present(filename: string) {
@@ -75,7 +86,7 @@ for (const phase of ["account", "signing", "active"] as const) {
       assertStrictEquals(
         await assertRejects(
           () =>
-            openInstanceIdentity(config, plugins, release, {
+            opened(scope, config, {
               seedCheckpoint(at) {
                 if (at === phase) throw interruption;
               },
@@ -102,7 +113,7 @@ for (const phase of ["account", "signing", "active"] as const) {
           ]
         ) {
           await assertRejects(
-            () => openInstanceIdentity(wrong, plugins, release),
+            () => opened(scope, wrong),
             IdentityRecoveryError,
             recovery,
           );
@@ -321,7 +332,7 @@ for (const filename of ["accounts.json", "sessions.json"]) {
         : "accounts.json";
       const before = present(`${config.resolved.instancePath}/${other}`);
       await assertRejects(
-        () => openInstanceIdentity(config, plugins, release),
+        () => opened(scope, config),
         IdentityRecoveryError,
         recovery,
       );
@@ -329,8 +340,7 @@ for (const filename of ["accounts.json", "sessions.json"]) {
         present(`${config.resolved.instancePath}/${filename}`),
         present(`${config.resolved.instancePath}/${other}`),
       ], [null, before]);
-      const recovered = recoveryForRoot(config.resolved.instancePath);
-      recovered.close();
+      await locked(scope, config.resolved.instancePath);
     }));
 }
 
@@ -342,12 +352,12 @@ for (
   ]
 ) {
   Deno.test(`instance startup: legacy or malformed input stays intact and cannot become takeover setup (${contents.length})`, () =>
-    identityFixture(async (root) => {
+    identityFixture(async (root, scope) => {
       const config = configuration(root, true);
       const filename = `${config.statePath}/config.json`;
       Deno.writeTextFileSync(filename, contents);
       await assertRejects(
-        () => openInstanceIdentity(config, plugins, release),
+        () => opened(scope, config),
         IdentityRecoveryError,
         recovery,
       );
@@ -357,8 +367,7 @@ for (
         present(`${config.resolved.instancePath}/accounts.json`),
         present(`${config.resolved.instancePath}/sessions.json`),
       ], [contents, null, null, null]);
-      const recovered = recoveryForRoot(config.resolved.instancePath);
-      recovered.close();
+      await locked(scope, config.resolved.instancePath);
     }));
 }
 
@@ -369,7 +378,7 @@ Deno.test("instance startup: exclusive ownership refuses a second opener and ret
     const filename = `${config.resolved.instancePath}/identity.lock`;
     const before = Deno.statSync(filename);
     await assertRejects(
-      () => openInstanceIdentity(config, plugins, release),
+      () => opened(scope, config),
       IdentityOwnershipError,
       "Identity state has another live owner; stop it before recovery.",
     );
@@ -389,7 +398,7 @@ Deno.test("instance startup: seed failure and cancellation release the lock and 
     assertStrictEquals(
       await assertRejects(
         () =>
-          openInstanceIdentity(config, plugins, release, {
+          opened(scope, config, {
             credentials: { hash: () => Promise.reject(failure) },
           }),
         Error,
@@ -403,7 +412,7 @@ Deno.test("instance startup: seed failure and cancellation release the lock and 
       owner: () => config,
       progress: { kind: "controlled", clock: "external" },
     }, (hold) =>
-      openInstanceIdentity(config, plugins, release, {
+      opened(scope, config, {
         signal: abort.signal,
         credentials: {
           hash: async (password) => {
@@ -497,13 +506,12 @@ Deno.test("instance startup: a different persisted binding refuses journal repla
     ];
     const before = paths.map(present);
     await assertRejects(
-      () => openInstanceIdentity(config, plugins, release),
+      () => opened(scope, config),
       IdentityRecoveryError,
       recovery,
     );
     assertEquals(paths.map(present), before);
-    const recovered = recoveryForRoot(config.resolved.instancePath);
-    recovered.close();
+    await locked(scope, config.resolved.instancePath);
   }));
 
 Deno.test("instance startup: after journal unlink the original replay keeps the lock until confirmation", () =>
@@ -525,10 +533,20 @@ Deno.test("instance startup: after journal unlink the original replay keeps the 
     f.retire();
     const journal = `${config.resolved.instancePath}/identity-transaction.json`;
     const attempts: (string | null)[] = [];
-    try {
+    let joining = false;
+    const joinRecovery = (owner: FixtureScope) => {
+      joining = true;
+      return opened(owner, config);
+    };
+    // If either probe fails, finish any retained recovery after closing the
+    // probe scope. The outer fixture reports both the assertion and cleanup.
+    scope.defer(async () => {
+      if (!joining) await fixtureScope(joinRecovery);
+    });
+    await fixtureScope(async (probe) => {
       await assertRejects(
         () =>
-          openInstanceIdentity(config, plugins, release, {
+          opened(probe, config, {
             recoveryCheckpoint(phase) {
               if (phase !== "journal-unlinked") return;
               attempts.push(present(journal));
@@ -538,25 +556,134 @@ Deno.test("instance startup: after journal unlink the original replay keeps the 
             },
           }),
         IdentityTransactionUnavailable,
-        "no partial state is available",
+        "Identity publication requires recovery; no partial state is available.",
       );
       assertEquals([present(journal), attempts], [null, [null]]);
-      assertThrows(
-        () => recoveryForRoot(config.resolved.instancePath),
+      await assertRejects(
+        () => locked(probe, config.resolved.instancePath),
         IdentityOwnershipError,
+        "Identity state has another live owner; stop it before recovery.",
       );
-    } finally {
-      const instance = await opened(scope, config);
+    });
+    const instance = await joinRecovery(scope);
+    const { principal } = await signIn(instance.sessions, {
+      username: "alice",
+      password: "password",
+    });
+    assertEquals([
+      attempts,
+      instance.acl.effectiveLevel(principal),
+      present(journal),
+    ], [[null, null], "admin", null]);
+  }));
+
+Deno.test("instance startup: a live close failure hands an unjournaled discard to the next recovery", () =>
+  identityFixture(async (root, scope) => {
+    const config = configuration(root, true, true);
+    const instanceRoot = config.resolved.instancePath;
+    const journal = `${instanceRoot}/identity-transaction.json`;
+    const access = `${config.statePath}/access.json`;
+    const accounts = `${instanceRoot}/accounts.json`;
+    const link = Deno.linkSync, remove = Deno.removeSync;
+    const refused = new Error("access discard refused");
+    let candidate: string | undefined;
+    const unavailable =
+      "Identity publication requires recovery; no partial state is available.";
+    const createRecipient = async (
+      instance: Awaited<ReturnType<typeof opened>>,
+    ) => {
       const { principal } = await signIn(instance.sessions, {
         username: "alice",
-        password: "password",
+        password: "private",
       });
-      assertEquals([
-        attempts,
-        instance.acl.effectiveLevel(principal),
+      const { revision, signature } = await new Response(
+        await instance.access.view(principal),
+      ).json();
+      return () =>
+        instance.provisioning.createAndAdd(principal, {
+          login: "bob",
+          temporaryPassword: "temporary",
+          level: "view",
+          operationId: UPDATE,
+          revision,
+          signature,
+        });
+    };
+    let originalAccounts: string | null;
+    let oldTransaction: Awaited<ReturnType<typeof opened>>["transaction"];
+    await assertRejects(
+      () =>
+        fixtureScope(async (live) => {
+          const instance = await opened(live, config);
+          originalAccounts = present(accounts);
+          oldTransaction = instance.transaction;
+          const create = await createRecipient(instance);
+          try {
+            Deno.linkSync = (from, to) => {
+              if (to === journal) {
+                const [staged] = [...Deno.readDirSync(config.statePath)];
+                candidate = `${config.statePath}/${staged.name}`;
+                throw new Error("prepared journal publication refused");
+              }
+              link(from, to);
+            };
+            Deno.removeSync = (path, options) => {
+              if (path === candidate) throw refused;
+              remove(path, options);
+            };
+            const error = await assertRejects(
+              create,
+              IdentityTransactionUnavailable,
+              unavailable,
+            );
+            assertInstanceOf(error.cause, AggregateError);
+            assertStrictEquals(error.cause.errors[1].errors[0], refused);
+          } finally {
+            Deno.linkSync = link;
+            Deno.removeSync = remove;
+          }
+          assertEquals([present(journal), present(accounts), present(access)], [
+            null,
+            originalAccounts,
+            null,
+          ]);
+          assertEquals(Deno.statSync(candidate!).isFile, true);
+        }),
+      IdentityTransactionUnavailable,
+      unavailable,
+    );
+    assertThrows(
+      oldTransaction!.assertReady,
+      OwnershipError,
+      "Owner is retired",
+    );
+    await fixtureScope((probe) =>
+      assertRejects(
+        () => locked(probe, instanceRoot),
+        IdentityOwnershipError,
+        "Identity state has another live owner; stop it before recovery.",
+      )
+    );
+    const reopened = await opened(scope, config);
+    reopened.transaction.assertReady();
+    assertEquals(
+      [
+        present(candidate!),
         present(journal),
-      ], [[null, null], "admin", null]);
-    }
+        present(accounts),
+        present(access),
+      ],
+      [null, null, originalAccounts!, null],
+    );
+    const create = await createRecipient(reopened);
+    const result = await new Response(await create()).json();
+    const bob = reopened.accounts.byLogin("bob")!;
+    assertEquals(result, {
+      operationId: UPDATE,
+      accountId: bob.id,
+      committed: true,
+    });
+    assertEquals(reopened.acl.capture().value.grants, { [bob.id]: "view" });
   }));
 
 Deno.test("instance startup: closing fences an already prepared private response and retires credential issuance", () =>
@@ -608,17 +735,16 @@ Deno.test("instance startup: closing fences an already prepared private response
   }));
 
 Deno.test("instance startup: corrupt stores remain evidence and failed construction releases exclusive ownership", () =>
-  identityFixture(async (root) => {
+  identityFixture(async (root, scope) => {
     const config = configuration(root);
     Deno.mkdirSync(config.resolved.instancePath, { recursive: true });
     const filename = `${config.resolved.instancePath}/accounts.json`;
     Deno.writeTextFileSync(filename, "{}");
     await assertRejects(
-      () => openInstanceIdentity(config, plugins, release),
+      () => opened(scope, config),
       IdentityStateError,
       "Invalid identity state; original bytes retained.",
     );
     assertEquals(present(filename), "{}");
-    const recovered = recoveryForRoot(config.resolved.instancePath);
-    recovered.close();
+    await locked(scope, config.resolved.instancePath);
   }));

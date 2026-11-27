@@ -79,6 +79,7 @@ export class IdentityTransaction {
   readonly #physicalRoot: string;
   readonly #vaultRoot: string;
   readonly #lease: OperationLease<"live">;
+  readonly #recoveryLease: OperationLease<"live" | "recovery">;
   readonly #checkpoint: (phase: string) => void;
   #saved: StoredConfigSnapshot;
   #unlinked?: { set: PublicationSet; phase: Journal["phase"] };
@@ -88,7 +89,7 @@ export class IdentityTransaction {
   #staging = 0;
   /** Undecided reservations are retained here before discard starts. A failed
    * discard transfers cleanup to this owner even if no journal was written. */
-  readonly #cleanup = new Set<() => void>();
+  readonly #cleanup = new Set<(assertCurrent: () => void) => void>();
   readonly #participants = new Map<IdentityParticipants, {
     readonly decision: IdentityDecision;
     readonly parts: readonly PublicationParticipant[];
@@ -100,16 +101,20 @@ export class IdentityTransaction {
     options: {
       vaultRoot: string;
       lease: OperationLease<"live">;
+      /** For owners whose recovery custody can outlive request admission. */
+      recoveryLease?: OperationLease<"recovery">;
       checkpoint?: (phase: string) => void;
     },
   ) {
-    const { lease } = options;
+    const { lease, recoveryLease } = options;
     assertOperationLease(lease, "live");
+    if (recoveryLease) assertOperationLease(recoveryLease, "recovery");
     this.#accounts = accounts;
     this.#acl = acl;
     this.#root = accounts.root;
     this.#vaultRoot = resolve(options.vaultRoot);
     this.#lease = lease;
+    this.#recoveryLease = recoveryLease ?? lease;
     const checkpoint = options.checkpoint?.bind(options);
     if (
       Object.prototype.toString.call(checkpoint) === "[object AsyncFunction]"
@@ -152,7 +157,7 @@ export class IdentityTransaction {
     if (this.#closed) return;
     if (
       this.#active || this.#staging || this.#participants.size ||
-      this.#cleanup.size ||
+      this.#cleanup.size || this.#unlinked ||
       (!this.#ready && this.#saved.raw === null)
     ) throw new IdentityTransactionUnavailable();
     this.#closed = true;
@@ -187,13 +192,19 @@ export class IdentityTransaction {
       this.#staging--;
     }
   }
-  #finishCleanup(release: () => void): void {
-    release();
+  #finishCleanup(
+    release: (assertCurrent: () => void) => void,
+    assertCurrent: () => void,
+  ): void {
+    release(assertCurrent);
     this.#cleanup.delete(release);
   }
-  #discardOrRetain(release: () => void): void {
+  #discardOrRetain(
+    release: (assertCurrent: () => void) => void,
+    assertCurrent = this.#lease.assertCurrent,
+  ): void {
     this.#cleanup.add(release);
-    this.#finishCleanup(release);
+    this.#finishCleanup(release, assertCurrent);
   }
   #discardParts(parts: readonly PublicationParticipant[]): unknown[] {
     const errors: unknown[] = [];
@@ -412,15 +423,19 @@ export class IdentityTransaction {
       operation.retire();
     }
   }
-  #retire(set: PublicationSet, phase: Journal["phase"]): void {
-    assertOperationLease(this.#lease, "live");
+  #retire(
+    set: PublicationSet,
+    phase: Journal["phase"],
+    assertCurrent: () => void,
+  ): void {
+    assertCurrent();
     this.#assertJournal(this.#saved);
     this.#journal.assertUnchanged(this.#saved);
     if (this.#saved.raw !== null) {
       this.#checkpoint("retiring");
       // This is the exact domain journal, not a participant or candidate writer.
       this.#journal.assertUnchanged(this.#saved);
-      assertOperationLease(this.#lease, "live");
+      assertCurrent();
       const binding = this.#saved.binding;
       const absent = {
         raw: null,
@@ -439,27 +454,27 @@ export class IdentityTransaction {
     }
     if (this.#unlinked) {
       this.#checkpoint("journal-unlinked");
-      assertOperationLease(this.#lease, "live");
+      assertCurrent();
       syncOwnedStoredDirectory(dirname(this.#saved.binding.target), this.#root);
       this.#journal.assertUnchanged(this.#saved);
     }
   }
-  #discardPrepared(set: PublicationSet): void {
-    const release = () => {
-      set.discard(() => this.#retire(set, "prepared"));
+  #discardPrepared(set: PublicationSet, assertCurrent: () => void): void {
+    const release = (current: () => void) => {
+      set.discard(() => this.#retire(set, "prepared", current));
       this.#unlinked = undefined;
     };
     if (this.#saved.raw !== null || this.#unlinked) {
       // A durable journal can be recovered by the next owner; after unlink,
       // #unlinked holds custody until directory sync and reservation release.
-      release();
+      release(assertCurrent);
     } else {
-      this.#discardOrRetain(release);
+      this.#discardOrRetain(release, assertCurrent);
     }
     this.#ready = true;
   }
-  #releaseDecided(set: PublicationSet) {
-    this.#retire(set, "decided");
+  #releaseDecided(set: PublicationSet, assertCurrent: () => void) {
+    this.#retire(set, "decided", assertCurrent);
     const unlinked = this.#unlinked;
     this.#unlinked = undefined;
     this.#ready = true;
@@ -472,8 +487,12 @@ export class IdentityTransaction {
     }
   }
   recover(authority: OfflineRecoveryAuthority): void {
-    assertOfflineRecovery(authority, this.#root);
-    assertOperationLease(this.#lease, "live");
+    const offline = assertOfflineRecovery(authority, this.#root);
+    const assertCurrent = () => {
+      this.#recoveryLease.assertCurrent();
+      offline.assertCurrent();
+    };
+    assertCurrent();
     if (
       this.#closed || this.#active || this.#staging || this.#participants.size
     ) {
@@ -484,11 +503,13 @@ export class IdentityTransaction {
     const parts: PublicationParticipant[] = [];
     try {
       this.#journal.assertUnchanged(this.#saved);
-      for (const release of this.#cleanup) this.#finishCleanup(release);
+      for (const release of this.#cleanup) {
+        this.#finishCleanup(release, assertCurrent);
+      }
       if (this.#unlinked) {
         const { set, phase } = this.#unlinked;
-        if (phase === "prepared") this.#discardPrepared(set);
-        else this.#releaseDecided(set);
+        if (phase === "prepared") this.#discardPrepared(set, assertCurrent);
+        else this.#releaseDecided(set, assertCurrent);
         return;
       }
       if (this.#saved.raw === null) {
@@ -524,14 +545,14 @@ export class IdentityTransaction {
       );
       if (value.phase === "prepared") {
         set.validate();
-        this.#discardPrepared(set);
+        this.#discardPrepared(set, assertCurrent);
       } else {
         set.decide();
         const outcome = set.publish();
         if (outcome.state !== "committed") {
           throw new PublicationRecoveryRequired(outcome);
         }
-        this.#releaseDecided(set);
+        this.#releaseDecided(set, assertCurrent);
       }
     } catch (cause) {
       this.#ready = false;
@@ -596,14 +617,14 @@ export class IdentityTransaction {
         throw new PublicationRecoveryRequired(outcome);
       }
       this.#checkpoint("installed");
-      return this.#releaseDecided(set);
+      return this.#releaseDecided(set, this.#lease.assertCurrent);
     } catch (cause) {
       this.#ready = false;
       if (decisionAttempted) {
         throw new IdentityTransactionUnavailable({ cause });
       }
       try {
-        if (set) this.#discardPrepared(set);
+        if (set) this.#discardPrepared(set, this.#lease.assertCurrent);
         else {
           group.discard();
           this.#ready = true;

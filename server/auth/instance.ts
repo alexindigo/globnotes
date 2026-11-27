@@ -27,9 +27,9 @@ import {
 } from "./offline_recovery.ts";
 import { createIdentityComposition } from "./composition.ts";
 
-// If replay removed its journal but cannot confirm retirement, the only
-// evidence is still owned by that exact transaction. Keep its exclusive lock
-// and recovery lease until a later startup joins and finishes it.
+// Some failed releases leave evidence only in the original transaction (for
+// example, an unlinked journal or an unjournaled discard). Keep its exclusive
+// lock and recovery lease until a later startup joins and finishes it.
 const pendingRecovery = new Map<string, {
   readonly vaultRoot: string;
   resume(): Promise<void>;
@@ -59,7 +59,6 @@ export async function openInstanceIdentity(
   let lifetime: ReturnType<typeof createOperationLease<"live">> | undefined;
   let accounts: AccountRepository | undefined;
   let closing: Promise<void> | undefined;
-  let transferred = false;
   const retire = () => {
     lifetime?.retire();
     accounts?.retireCredentials();
@@ -81,15 +80,44 @@ export async function openInstanceIdentity(
       await pending.resume();
       signal?.throwIfAborted();
     }
-    const owner = (await custody.acquire(
+    // Request teardown always drains its own scope. The lock can outlive it
+    // only by transferring to the recovery record for this physical root.
+    const rootCustody = createOwnershipScope();
+    custody.defer(async () => (await rootCustody.releaseAll()).throwIfFailed());
+    const lock = await rootCustody.acquire(
       () => acquireOfflineRecovery(settings.instancePath),
       (owner) => owner.close(),
-    )).value;
+    );
+    const { authority } = lock.value;
+    const offline = assertOfflineRecovery(authority, settings.instancePath);
+    const retain = (
+      transaction: IdentityTransaction,
+      retireRecovery: () => void,
+    ) => {
+      const recoveryCustody = createOwnershipScope();
+      // Retire recovery authority before releasing the acquired lock (LIFO).
+      rootCustody.transfer(lock, recoveryCustody);
+      recoveryCustody.defer(retireRecovery);
+      let completion: Promise<void> | undefined;
+      pendingRecovery.set(root, {
+        vaultRoot: settings.statePath,
+        resume() {
+          if (!completion) {
+            transaction.recover(authority);
+            transaction.close();
+            completion = recoveryCustody.releaseAll().then((report) =>
+              report.throwIfFailed()
+            ).finally(() => pendingRecovery.delete(root));
+          }
+          return completion;
+        },
+      });
+    };
     lifetime = createOperationLease("live", [() => {
       signal?.throwIfAborted();
       custody.assertCurrent();
       return undefined;
-    }], [assertOfflineRecovery(owner.authority, settings.instancePath)]);
+    }], [offline]);
     const lease = lifetime.lease;
     accounts = new AccountRepository(
       settings.instancePath,
@@ -106,44 +134,30 @@ export async function openInstanceIdentity(
     const existingBinding = bindingBefore.raw === null
       ? undefined
       : singleVaultIdentity(settings, lease.assertCurrent);
-    const recoveryLifetime = createOperationLease("live", [() => {
-      custody.assertCurrent();
+    const replayLifetime = createOperationLease("live", [() => {
       bindingFile.assertUnchanged(bindingBefore);
       return undefined;
-    }], [assertOfflineRecovery(owner.authority, settings.instancePath)]);
+    }], [offline]);
+    let retainedReplay = false;
     try {
       // Recovery borrows the same account repository. Release transaction
       // custody before constructing the live owner with the settled binding.
       openIdentityTransaction(
         accounts,
         settings.statePath,
-        recoveryLifetime.lease,
-        owner.authority,
+        replayLifetime.lease,
+        authority,
         existingBinding?.id,
         {
           checkpoint: options.recoveryCheckpoint,
           retain(transaction) {
-            let completion: Promise<void> | undefined;
-            pendingRecovery.set(root, {
-              vaultRoot: settings.statePath,
-              resume() {
-                if (!completion) {
-                  transaction.recover(owner.authority);
-                  transaction.close();
-                  recoveryLifetime.retire();
-                  completion = close().finally(() =>
-                    pendingRecovery.delete(root)
-                  );
-                }
-                return completion;
-              },
-            });
-            transferred = true;
+            retain(transaction, replayLifetime.retire);
+            retainedReplay = true;
           },
         },
       )?.close();
     } finally {
-      if (!transferred) recoveryLifetime.retire();
+      if (!retainedReplay) replayLifetime.retire();
     }
     const signing = new SessionRepository(settings.instancePath);
     const sessions = new InstanceSessions(
@@ -180,11 +194,29 @@ export async function openInstanceIdentity(
       accounts,
       declaredAdmin: settings.instance.vaults.entries.globnotes?.admin,
     });
+    const bindingAfter = bindingFile.capture();
+    const recoveryLifetime = createOperationLease("recovery", [() => {
+      bindingFile.assertUnchanged(bindingAfter);
+      return undefined;
+    }], [offline]);
+    let retainedLive = false;
+    custody.defer(() => {
+      if (!retainedLive) recoveryLifetime.retire();
+    });
     const transaction = new IdentityTransaction(accounts, acl, {
       vaultRoot: settings.statePath,
       lease,
+      recoveryLease: recoveryLifetime.lease,
     });
-    custody.defer(() => transaction.close());
+    custody.defer(() => {
+      try {
+        transaction.close();
+      } catch (error) {
+        retain(transaction, recoveryLifetime.retire);
+        retainedLive = true;
+        throw error;
+      }
+    });
     const bootstrap = new IdentityBootstrap(accounts, sessions, {
       lease,
       legacy,
@@ -223,7 +255,7 @@ export async function openInstanceIdentity(
     });
   } catch (error) {
     retire();
-    if (!transferred) (await custody.releaseAll()).throwIfFailed(error);
+    (await custody.releaseAll()).throwIfFailed(error);
     throw error;
   }
 }
