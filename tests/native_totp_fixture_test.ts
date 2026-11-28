@@ -41,7 +41,9 @@ Deno.test("native TOTP frozen clock: rollover selects the verifier's fresh curre
       probe,
       `
       import { checkTotpCode } from ${
-        JSON.stringify(new URL("../server/auth/local.ts", import.meta.url).href)
+        JSON.stringify(
+          new URL("../server/auth/credentials.ts", import.meta.url).href,
+        )
       };
       console.log(JSON.stringify({ now: Date.now(), legacyAccepted: checkTotpCode(${
         JSON.stringify(legacyPrevious)
@@ -358,10 +360,6 @@ Deno.test("native server fixture: relative vault/state reach the child and one l
       `${vault}/Seed.md`,
       "relative child path consumer\n",
     );
-    await Deno.writeTextFile(
-      `${state}/config.json`,
-      JSON.stringify({ auth_type: "none" }),
-    );
     // Native origin discovery needs networkInterfaces. Keep that capability
     // in an owned native child, not in the ordinary server-test runner.
     const probe = `${directory}/probe.mjs`;
@@ -369,6 +367,11 @@ Deno.test("native server fixture: relative vault/state reach the child and one l
       probe,
       `
       import { assertRejects, assertStrictEquals } from "@std/assert";
+      import { publicScenario } from ${
+        JSON.stringify(
+          new URL("./helpers/fixture_scenarios.ts", import.meta.url).href,
+        )
+      };
       import { bootServer } from ${
         JSON.stringify(
           new URL("../client/tests/e2e/harness-helpers.mjs", import.meta.url)
@@ -379,7 +382,9 @@ Deno.test("native server fixture: relative vault/state reach the child and one l
       const constructing = bootServer(${
         JSON.stringify(relative(Deno.cwd(), vault))
       }, ${JSON.stringify(relative(Deno.cwd(), state))}, {
-        env, logsDir: ${JSON.stringify(directory)}
+        fixtureScenario: publicScenario(), env, logsDir: ${
+        JSON.stringify(directory)
+      }
       });
       env.GLOBNOTES__SERVER_PATHPREFIX = "/mutated";
       const server = await constructing;

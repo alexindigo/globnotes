@@ -1,4 +1,5 @@
 import { done, pending, waitUntil } from "../../../tests/helpers/wait.ts";
+import { signInNative } from "./settings-access-native.mjs";
 import { nativeSession } from "./native-cdp-session.mjs";
 import { finalizeNativeCase } from "./native-case-finalization.mjs";
 import { settleSettingsInventory } from "./settings-inventory-native.mjs";
@@ -82,15 +83,15 @@ export async function exerciseSettingsCrossBrowser({ session: a, server, directo
     await Deno.writeTextFile(`${directory}/persistence-${label}.json`, JSON.stringify(row, null, 2), { createNew: true });
   }
    try {
-   await c.goto(`${server.baseUrl}/NoteA`); await c.poll("!!document.querySelector('#username')");
+   await c.goto(`${server.baseUrl}/NoteA`); await c.poll("!!document.querySelector('#identity-login-name')");
   const rejectedRead = await api(c, "/_/api/plugin-host/session-guard/settings/preferences");
   const rejectedCommand = await api(c, "/_/api/plugin-host/session-guard/commands/report", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
-  assert(rejectedRead.status === 401 && rejectedCommand.status === 401, "Unauthenticated peer reached protected settings/commands");
+  assert(rejectedRead.status === 403 && rejectedCommand.status === 403, `Guest with no vault access: expected both private operations forbidden, got ${rejectedRead.status}/${rejectedCommand.status}`);
   const count = await api(a, "/_/api/plugin-host/session-guard/commands/report-count", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
   assert(count.status === 200 && count.body.result === 0, "Rejected command had a Worker side effect");
-  await b.goto(`${server.baseUrl}/NoteA`); await b.poll("!!document.querySelector('#username')");
-  await b.click("#username"); await b.type(username); await b.click("#password"); await b.type(password); await b.button("Log In");
-  await b.poll("!document.querySelector('#username') && !!document.querySelector('.toast-viewer')");
+  await b.goto(`${server.baseUrl}/NoteA`); await b.poll("!!document.querySelector('#identity-login-name')");
+  await signInNative(b, server, { login: username, password }, { returnPath: "/NoteA" });
+  await b.poll("!document.querySelector('#identity-login-name') && !!document.querySelector('.toast-viewer')");
   await b.poll("typeof window.__settingsPeerThemeEvents==='number'");
   assert(a.browserContextId !== b.browserContextId && b.browserContextId !== c.browserContextId, "Peer contexts share authentication state");
   await b.goto(`${server.baseUrl}/Persistence`); await b.poll("!!document.querySelector('.toast-viewer') && document.querySelector('.toast-viewer').textContent.includes('Persistence seed.')");

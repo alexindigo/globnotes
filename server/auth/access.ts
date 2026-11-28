@@ -1,19 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-only
-
-/** v2 configured-access glue; keeps the existing account and policy gate. */
 import { HttpError } from "@pathfinder/pathfinder";
-import { createUuid } from "../../shared/uuid.ts";
-import {
-  AuthType,
-  type GlobalConfig,
-  type StoredConfig,
-  StoredConfigConflict,
-} from "../config.ts";
-import { hashPassword } from "../helpers.ts";
-import { state } from "../state.ts";
-import { LocalAuth } from "./local.ts";
-import { pendingTotpEnrollments } from "./totp_enrolment.ts";
-import { settingsWriteGuard } from "./middleware.ts";
+import { StoredConfigConflict } from "../config/file_store.ts";
 import {
   type AuthorityVault,
   InstanceAuthority,
@@ -33,322 +20,15 @@ import {
 import { readAuthorityState } from "./authority_context.ts";
 import { readRequestJson } from "./request_json.ts";
 import { AccessLoginConflict } from "./access_login_conflict.ts";
-import { singleIdentityVault } from "./http_policy.ts";
-
-function conflict(message: string): never {
-  throw new HttpError(409, message);
-}
-function revision(config = state.config): number {
-  const value = config.storedConfig?.access_revision ?? 0;
-  if (!Number.isSafeInteger(value) || (value as number) < 0) {
-    conflict("Invalid saved access revision; original configuration retained.");
-  }
-  return value as number;
-}
-async function contentSignature(raw: string | null): Promise<string> {
-  const bytes = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(
-      raw === null ? "absent-access-v1" : `present:${raw}`,
-    ),
-  );
-  return [...new Uint8Array(bytes)].map((byte) =>
-    byte.toString(16).padStart(2, "0")
-  ).join("");
-}
-function assertPersistence(
-  config: GlobalConfig,
-  snapshot: ReturnType<GlobalConfig["captureStoredConfig"]>,
-) {
-  try {
-    config.assertStoredConfigUnchanged(snapshot);
-  } catch (error) {
-    if (error instanceof StoredConfigConflict) {
-      conflict(
-        "Configuration changed; review current settings before retrying.",
-      );
-    }
-    throw error;
-  }
-}
-function freezeBase(value: StoredConfig): StoredConfig {
-  for (const child of Object.values(value)) {
-    if (child && typeof child === "object") freezeBase(child as StoredConfig);
-  }
-  return Object.freeze(value);
-}
-async function captureAccessSnapshot() {
-  const config = state.config, auth = state.auth, lifecycle = state.lifecycle;
-  const epoch = lifecycle?.epoch, stored = JSON.stringify(config.storedConfig);
-  const authType = config.authType, setupRequired = config.setupRequired;
-  const readOnlySettings = config.readOnlySettings;
-  const settingsWritable = config.settingsWritable,
-    savedRevision = revision(config);
-  const persistence = config.captureStoredConfig(), raw = persistence.raw;
-  let base: StoredConfig = {};
-  if (raw !== null) {
-    try {
-      const parsed = JSON.parse(raw);
-      if (
-        !parsed || typeof parsed !== "object" || Array.isArray(parsed) ||
-        JSON.stringify(parsed) !== JSON.stringify(config.storedConfig)
-      ) {
-        conflict(
-          "Configuration changed externally; reload deployment before editing access.",
-        );
-      }
-      base = freezeBase(parsed);
-    } catch (error) {
-      if (error instanceof HttpError) throw error;
-      conflict("Invalid stored configuration; original bytes retained.");
-    }
-  } else if (config.storedConfig !== null) {
-    conflict("Stored configuration changed externally.");
-  }
-  const assertCurrent = () => {
-    if (
-      state.config !== config || state.auth !== auth ||
-      state.lifecycle !== lifecycle ||
-      lifecycle?.epoch !== epoch || config.authType !== authType ||
-      config.setupRequired !== setupRequired ||
-      JSON.stringify(config.storedConfig) !== stored ||
-      revision(config) !== savedRevision ||
-      config.readOnlySettings !== readOnlySettings ||
-      config.settingsWritable !== settingsWritable
-    ) conflict("Access settings changed while this request was pending.");
-    assertPersistence(config, persistence);
-  };
-  const signature = await contentSignature(raw);
-  assertCurrent();
-  const view = {
-    mode: authType === AuthType.TOTP ? "password" : authType,
-    username: auth?.username ?? "",
-    totpEnabled: auth?.isTotpEnabled ?? false,
-    readOnlySettings,
-    settingsWritable,
-    revision: savedRevision,
-    signature,
-    lastUpdateId: config.storedConfig?.access_update_id ?? null,
-    pinned: {
-      mode: false,
-      username: false,
-      password: false,
-      totp: false,
-      readOnlySettings: false,
-      sessions: false,
-    },
-  };
-  return { view, base, persistence, config, auth, assertCurrent };
-}
-export async function accessView() {
-  return (await captureAccessSnapshot()).view;
-}
-export async function updateAccess(
-  req: Request,
-  input: unknown,
-  admittedGuard?: () => void,
-) {
-  const guard = admittedGuard ?? await settingsWriteGuard(req);
-  guard();
-  if (!input || typeof input !== "object" || Array.isArray(input)) {
-    throw new HttpError(422, "Access settings require an object.");
-  }
-  const data = input as Record<string, unknown>;
-  if (
-    typeof data.mode !== "string" ||
-    !["password", "none", "read_only"].includes(data.mode)
-  ) {
-    throw new HttpError(422, "Invalid access mode.");
-  }
-  const fields = [
-    "mode",
-    "username",
-    "password",
-    "totpEnabled",
-    "totpKey",
-    "totpCode",
-    "readOnlySettings",
-    "revision",
-    "signature",
-    "currentPassword",
-    "currentTotp",
-    "updateId",
-  ];
-  if (Object.keys(data).some((key) => !fields.includes(key))) {
-    throw new HttpError(422, "Unsupported access setting.");
-  }
-  for (
-    const key of [
-      "username",
-      "password",
-      "totpKey",
-      "totpCode",
-      "currentPassword",
-      "currentTotp",
-      "signature",
-    ]
-  ) {
-    if (data[key] !== undefined && typeof data[key] !== "string") {
-      throw new HttpError(422, `${key} must be text.`);
-    }
-  }
-  for (const key of ["totpEnabled", "readOnlySettings"]) {
-    if (data[key] !== undefined && typeof data[key] !== "boolean") {
-      throw new HttpError(422, `${key} must be a boolean.`);
-    }
-  }
-  if (
-    data.updateId !== undefined &&
-    (typeof data.updateId !== "string" ||
-      !/^[a-f0-9-]{36}$/.test(data.updateId))
-  ) throw new HttpError(422, "Invalid access update identity.");
-  const snapshot = await captureAccessSnapshot(), before = snapshot.view;
-  if (
-    data.revision !== before.revision || data.signature !== before.signature
-  ) {
-    conflict(
-      "Access settings changed; review current configuration before retrying.",
-    );
-  }
-  const { auth, config } = snapshot;
-  const protectedMode = data.mode === "password";
-  const enabled = protectedMode &&
-    (data.totpEnabled ?? before.totpEnabled) === true;
-  const mode = protectedMode
-    ? enabled ? AuthType.TOTP : AuthType.PASSWORD
-    : data.mode === "none"
-    ? AuthType.NONE
-    : AuthType.READ_ONLY;
-  const username = protectedMode
-    ? ((data.username as string | undefined) ?? before.username).trim()
-      .toLowerCase()
-    : before.username;
-  const password = data.password as string | undefined;
-  const newKey = data.totpKey as string | undefined;
-  if (protectedMode && (!username || (!auth && !password))) {
-    throw new HttpError(
-      400,
-      "Username and password are required to create password protection.",
-    );
-  }
-  if (password !== undefined && !password) {
-    throw new HttpError(
-      400,
-      "A new password cannot be empty; omit it to keep the current password.",
-    );
-  }
-  if (
-    (!enabled && (newKey !== undefined || data.totpCode !== undefined)) ||
-    (newKey === "")
-  ) throw new HttpError(422, "Invalid authenticator enrolment.");
-  const enrollment = enabled && (!before.totpEnabled || newKey !== undefined)
-    ? pendingTotpEnrollments(config).confirm("access", newKey, data.totpCode)
-    : undefined;
-  const securityChanged = protectedMode &&
-    (!auth || username !== before.username || password !== undefined ||
-      enabled !== before.totpEnabled || newKey !== undefined);
-  const readOnlySettings = data.readOnlySettings ??
-    (before.mode === "none"
-      ? before.readOnlySettings
-      : data.mode === "none"
-      ? true
-      : before.readOnlySettings);
-  const newHash = password !== undefined
-    ? await hashPassword(password)
-    : undefined;
-  const commit = async () => {
-    guard();
-    snapshot.assertCurrent();
-    enrollment?.assertCurrent();
-    if (auth) {
-      if (typeof data.currentPassword !== "string") {
-        throw new HttpError(
-          401,
-          "Confirm your current password and authenticator before changing access.",
-        );
-      }
-      try {
-        await auth.confirmCredentials(
-          data.currentPassword,
-          data.currentTotp as string | undefined,
-        );
-      } catch {
-        throw new HttpError(
-          401,
-          "Current password or authenticator confirmation failed.",
-        );
-      }
-    }
-    guard();
-    snapshot.assertCurrent();
-    enrollment?.assertCurrent();
-    const next: StoredConfig = {
-      ...snapshot.base,
-      auth_type: mode,
-      read_only_settings: readOnlySettings as boolean,
-      access_revision: before.revision + 1,
-      access_update_id: data.updateId as string | undefined ??
-        createUuid(),
-    };
-    if (protectedMode) {
-      if (!auth || data.username !== undefined) next.username = username;
-      if (newHash !== undefined) next.password_hash = newHash;
-      if (enabled && newKey !== undefined) {
-        next.totp_key = newKey;
-        next.totp_key_encoding = enrollment!.encoding;
-      }
-      if (securityChanged) {
-        next.secret_key = [...crypto.getRandomValues(new Uint8Array(32))].map((
-          byte,
-        ) => byte.toString(16).padStart(2, "0")).join("");
-      }
-    }
-    if (!enabled) {
-      delete next.totp_key;
-      delete next.totp_key_encoding;
-    }
-    try {
-      config.saveStoredConfig(next, snapshot.persistence);
-    } catch (error) {
-      if (error instanceof StoredConfigConflict) {
-        conflict("Configuration changed before access commit.");
-      }
-      throw error;
-    }
-    const authorizationChanged = config.authType !== mode || securityChanged;
-    const previouslyWritable = config.authType !== AuthType.READ_ONLY;
-    config.authType = mode;
-    config.setupRequired = false;
-    state.auth = protectedMode
-      ? securityChanged ? new LocalAuth(config) : auth
-      : null;
-    if (state.auth?.isTotpEnabled && securityChanged) {
-      state.auth.markTotpUsed(
-        newKey !== undefined ? String(data.totpCode) : String(data.currentTotp),
-      );
-    }
-    if (authorizationChanged) state.lifecycle?.bumpEpoch();
-    if (previouslyWritable !== (mode !== AuthType.READ_ONLY)) {
-      state.plugins?.runtime?.suspend();
-      state.plugins?.stop();
-    }
-    state.lifecycle?.notifyInvalidation("catalog");
-    await enrollment?.complete();
-    return {
-      view: await accessView(),
-      requiresLogin: protectedMode && securityChanged,
-    };
-  };
-  const result = state.lifecycle
-    ? await state.lifecycle.gate.run(commit)
-    : await commit();
-  // Settings-only locking leaves unrelated plugin owners intact.
-  if (before.mode !== data.mode) await state.plugins?.runtime?.reconcile();
-  return result;
-}
+import { deliveryJsonBody, singleIdentityVault } from "./http_policy.ts";
 
 const json = (body: ReadableStream<Uint8Array>) =>
-  new Response(body, { headers: { "content-type": "application/json" } });
+  new Response(body, {
+    headers: {
+      "content-type": "application/json",
+      "cache-control": "no-store",
+    },
+  });
 const UPDATE_FIELDS = [
   "revision",
   "signature",
@@ -398,9 +78,8 @@ function parseAccessChange(input: unknown) {
   return { revision, signature, updateId, everybody, grants: named, exact };
 }
 
-/** Prepared v3 vault Access workflow; the active legacy entries above remain
- * until cutover. Every read and edit is admitted by the target's live Admin
- * lease. Only lease-bound bodies leave it, including the self-demotion ACK. */
+/** Every read and edit is admitted by the target's live Admin lease. Only
+ * lease-bound bodies leave it, including the self-demotion ACK. */
 export class VaultAccess {
   readonly authority: InstanceAuthority;
   readonly vault: AuthorityVault;
@@ -493,19 +172,18 @@ export class VaultAccess {
       { updateId, actorId: actor.accountId },
       guard,
     );
-    // Self-demotion retires Admin admission, not the actor's right to the
-    // acknowledgment. Its capabilities are qualified by the new ACL snapshot.
-    const disclosure = this.authority.vaultDisclosure(
+    // The original request owns the exact receipt even if a peer publishes
+    // a newer ACL. Only the caller's own current capabilities accompany it.
+    const capabilities = this.authority.vaultUpdateReceipt(
       actor,
       this.vault,
-      acl.capture(),
-      { signal },
+      signal,
     );
-    return disclosure.body(disclosure.prepare(Object.freeze({
+    return deliveryJsonBody(() => ({
       updateId,
       committed: true as const,
-      capabilities: this.authority.capabilities(actor, this.vault),
-    })));
+      capabilities: capabilities(),
+    }));
   }
   /** Actor-bound lost-reply status. A demoted actor learns only whether its own
    * update is the current ACL revision, never the grants or another actor's edit. */
@@ -533,7 +211,6 @@ export class VaultAccess {
     })));
   }
 }
-/** Injection-only adapters, not discovered on the active legacy route tree. */
 export function vaultAccessHandlers(
   workflow: VaultAccess,
   principal: (request: Request) => Promise<Principal>,
@@ -546,15 +223,11 @@ export function vaultAccessHandlers(
     },
     async put(request: Request) {
       const admitted = await principal(request);
-      workflow.admit(admitted);
+      const lease = workflow.admit(admitted);
+      const input = await readRequestJson(request);
+      lease.assertCurrent();
       try {
-        return json(
-          await workflow.update(
-            admitted,
-            await readRequestJson(request),
-            request.signal,
-          ),
-        );
+        return json(await workflow.update(admitted, input, request.signal));
       } catch (error) {
         if (error instanceof AccessLoginConflict) return error.response();
         throw error;
@@ -573,8 +246,8 @@ export function vaultAccessHandlers(
   });
 }
 
-/** Prepared branch of the existing status route; receipt reads never reopen the
- * Admin-only Access list or rely on the legacy authentication probe. */
+/** Branch of the existing status route; receipt reads never reopen the
+ * Admin-only Access list. */
 export function identityAuthCheck(
   request: Request,
   workflow: VaultAccess,

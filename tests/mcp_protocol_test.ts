@@ -14,7 +14,7 @@ import {
 
 import { assert, assertEquals } from "@std/assert";
 import * as path from "@std/path";
-import { SignJWT } from "jose";
+import { signInFixtureWithExpiry } from "./helpers/identity_fixture.ts";
 import type { TestServer } from "./helpers/boot.ts";
 import { bootOnTestDomain as boot } from "./helpers/mcp.ts";
 import { done, pending, waitUntil } from "./helpers/wait.ts";
@@ -274,20 +274,18 @@ Deno.test("mcp protocol: 50 concurrent tool calls", async () => {
 });
 
 Deno.test("mcp protocol: a token that expires between calls", async () => {
-  const secret = "mcp-protocol-test-secret";
+  const person = { login: "agent", password: "correct horse" };
   const server = await boot({
-    fixtureScenario: signedInScenario(
-      { login: "agent", password: "correct horse" },
-      {},
-      { secret_key: secret },
-    ),
+    fixtureScenario: signedInScenario(person),
   });
   try {
     // The server's own token format, with a two-second lifetime.
-    const token = await new SignJWT({ sub: "agent" })
-      .setProtectedHeader({ alg: "HS256" })
-      .setExpirationTime("2s")
-      .sign(new TextEncoder().encode(secret));
+    const root = `${server.layout.instance}/.globnotes`;
+    const { access_token: token } = await signInFixtureWithExpiry(
+      root,
+      { username: person.login, password: person.password },
+      2,
+    );
     const auth = { authorization: `Bearer ${token}` };
     const first = await callTool(server, "globnotes_list_tags", {}, 1, auth);
     assertEquals(first.status, 200);
@@ -296,7 +294,7 @@ Deno.test("mcp protocol: a token that expires between calls", async () => {
       const reply = await callTool(server, "globnotes_list_tags", {}, 2, auth);
       return reply.status === 401 ? done(reply) : pending(reply.status);
     }, { label: "token expiry", intervalMs: 250, children: [server] });
-    assertEquals(expired.body.detail, "Invalid authentication credentials");
+    assertEquals(expired.body.detail, "Invalid authentication credentials.");
   } finally {
     await server.close();
   }

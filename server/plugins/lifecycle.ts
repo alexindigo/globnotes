@@ -5,7 +5,7 @@
  * composition root injects adapters. */
 
 import * as path from "@std/path";
-import { AuthType, type GlobalConfig } from "../config.ts";
+import type { GlobalConfig } from "../config.ts";
 import type { ActionReceipt, OperationFact } from "./contracts.ts";
 import type { PluginManifest } from "./manifest.ts";
 import { OperationError } from "./errors.ts";
@@ -204,12 +204,10 @@ export class PluginLifecycle {
     }
   }
 
-  /** Prepared identity compositions inject instance service eligibility. It is
-   * independent of any browser's vault access; the legacy mode bridge remains
-   * the default until the production switch. */
+  /** Instance service eligibility never depends on a browser's vault access. */
   constructor(
     private readonly config: GlobalConfig,
-    private readonly serviceEligibility?: PluginServiceEligibility,
+    private readonly serviceEligibility: PluginServiceEligibility,
   ) {}
 
   assertServiceEligibility(eligibility: PluginServiceEligibility): void {
@@ -243,23 +241,17 @@ export class PluginLifecycle {
   }
   operational(context?: AuthorityReadContext): boolean {
     const service = this.serviceEligibility;
-    if (service) {
-      // Authority evaluation forwards its issued context. Ordinary/background
-      // queries open their own scope and cannot inherit native custody.
-      return context
-        ? service.operational(context)
-        : readAuthorityState((ordinary) => service.operational(ordinary));
-    }
-    return !this.config.setupRequired;
+    // Authority evaluation forwards its issued context. Ordinary/background
+    // queries open their own scope and cannot inherit native custody.
+    return context
+      ? service.operational(context)
+      : readAuthorityState((ordinary) => service.operational(ordinary));
   }
   writable(): boolean {
     const service = this.serviceEligibility;
-    if (service) {
-      return readAuthorityState((context) =>
-        this.operational(context) && service.writable(context)
-      );
-    }
-    return this.operational() && this.config.authType !== AuthType.READ_ONLY;
+    return readAuthorityState((context) =>
+      this.operational(context) && service.writable(context)
+    );
   }
 
   onFact(
@@ -272,11 +264,14 @@ export class PluginLifecycle {
   ): void {
     this.#syncObserver = observer;
   }
-  /** Post-commit fact admission. Delivery is delegated; admission failures
-   * here never change the committed operation's response. */
+  /** API and external commits publish independent host facts. A plugin action
+   * descended from a viewer cannot drop that viewer by publishing a fact. */
+  #observerViewer(fact: OperationFact): ViewerAuthority | undefined {
+    return fact.origin === "plugin" ? this.viewerForFact(fact) : undefined;
+  }
   observe(fact: OperationFact): void {
     try {
-      this.#factObserver?.(fact, this.viewerForFact(fact));
+      this.#factObserver?.(fact, this.#observerViewer(fact));
     } catch {
       // Observer admission failure is recorded by the runtime, never thrown
       // back into a completed host operation.
@@ -284,7 +279,7 @@ export class PluginLifecycle {
   }
   syncCompleted(fact: OperationFact): void {
     try {
-      this.#syncObserver?.(fact, this.viewerForFact(fact));
+      this.#syncObserver?.(fact, this.#observerViewer(fact));
     } catch { /* same admission contract */ }
   }
 

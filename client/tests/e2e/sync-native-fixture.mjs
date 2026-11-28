@@ -1,6 +1,7 @@
 // M5-owned real HTTP provider, Worker plugin, disk and native browser input.
 import { bootServer } from "../../../tests/helpers/boot.ts";
 import { nativeAccountScenario, nativeFixtureInput } from "./config-fixture.mjs";
+import { nativeFixtureAdmin } from "./fixtures.mjs";
 import { DatabaseSync } from "node:sqlite";
 import { memoryRemote } from "../../../tests/helpers/memory_remote.ts";
 import { applicationServer, bindAddress, httpOrigin } from "./http-origin.mjs";
@@ -25,10 +26,12 @@ export async function syncCase(name, run) {
   const token="m5-browser-secret-marker-72819";
   const remote=memoryRemote({hostname:bindAddress(),token});
   const remoteUrl=httpOrigin(new URL(remote.baseUrl).port);
-  let server,session;
+  let server,session,adminHeaders;
+  const scenario = nativeAccountScenario();
   const results=[], writes=[];
   async function api(route,method="GET",body) {
-    const response=await fetch(`${server.baseUrl}/_/api/${route}`,{method,headers:{"content-type":"application/json"},body:body===undefined?undefined:JSON.stringify(body),signal:AbortSignal.timeout(15000)});
+    const privileged = route === "drivers" || route.startsWith("plugin-host");
+    const response=await fetch(`${server.baseUrl}/_/api/${route}`,{method,headers:{"content-type":"application/json",...(privileged ? adminHeaders : {})},body:body===undefined?undefined:JSON.stringify(body),signal:AbortSignal.timeout(15000)});
     const value=await response.json();assert(response.ok,`${method} ${route}: ${response.status}`);return value;
   }
   async function capture(label) {
@@ -41,7 +44,8 @@ export async function syncCase(name, run) {
     for(const [name,clip]of Object.entries(regions)) {const crop=await session.send("Page.captureScreenshot",{format:"png",clip});await Deno.writeFile(`${directory}/review/${label}-${name}.png`,Uint8Array.from(atob(crop.data),c=>c.charCodeAt(0)));}
   }
   try {
-    server=await bootServer({GLOBNOTES_GLOBNOTES_PATH:vault,...await nativeFixtureInput(nativeAccountScenario()),GLOBNOTES_GLOBNOTES_PLUGINS_AUTOENABLE:"false"},applicationServer());
+    server=await bootServer({GLOBNOTES_GLOBNOTES_PATH:vault,...await nativeFixtureInput(scenario),GLOBNOTES_GLOBNOTES_PLUGINS_AUTOENABLE:"false"},applicationServer());
+    ({ headers: adminHeaders } = await nativeFixtureAdmin(server));
     const catalog=await api("plugin-host");await api("plugin-host/globnotes-test-driver/enabled","PUT",{enabled:true,revision:catalog.policy.revision,signature:catalog.policy.signature});
     const permission=await api("plugin-host/globnotes-test-driver/permissions");
     await api("plugin-host/globnotes-test-driver/permissions","PUT",{revision:permission.revision,signature:permission.signature,requestSourceKey:permission.requestSourceKey,requestSourceRevision:permission.requestSourceRevision,allowNetwork:true,approvedNetwork:permission.requestedNetwork,approvedImports:[]});
@@ -50,6 +54,13 @@ export async function syncCase(name, run) {
     const f={directory,vault,state,remote,remoteUrl,token,session,api,capture,results,writes,
       waitForExport:(path,content)=>waitForDriverExport(state,path,content),
       url:path=>`${server.baseUrl}${path}`,
+      async signIn() {
+        const { login, password } = scenario.identity.people[0];
+        await session.goto(f.url("/_/login"));
+        await f.fill("#identity-login-name", login); await f.fill("#identity-login-password", password);
+        await session.button("Continue", ".identity-login");
+        await session.poll("fetch('/_/api/auth-check').then(async r=>r.ok&&(await r.json()).capabilities?.canManageVault===true)");
+      },
       async open() {
         if(!await session.evaluate("!!document.querySelector('#settings-modal-title')")){
           await showSidebar(session);

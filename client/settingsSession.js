@@ -2,11 +2,10 @@
 import { isDeploymentSource } from "./configurationProvenance.js";
 import { computed, reactive, readonly, ref, watch } from "vue";
 import {
-  getConfig, getAccessSettings, postBrand, getTree, putPluginEnabled, putPluginPolicy,
+  getConfig, postBrand, getTree, putPluginEnabled, putPluginPolicy,
   getPluginPermissions, putPluginPermissions, getPluginPermissionRequests,
   decidePluginPermissionRequest,
 } from "./api.js";
-import { authTypes } from "./constants.js";
 import { createCoreSettingsAdapters } from "./coreSettingsAdapters.js";
 import { createPluginInventoryController } from "./pluginInventoryController.js";
 import { createPluginPermissionController, permissionScopeKey, permissionAttentionId } from "./pluginPermissionController.js";
@@ -16,11 +15,9 @@ import {
 } from "./pluginRuntime.js";
 import { registerSessionParticipant } from "./sessionActions.js";
 import { createSettingsPageState } from "./settingsPageState.js";
-import { commitPluginPage, findPage, isPluginSettingsPage, readPluginPage, settingsPages, settingsNavigation } from "./settingsRegistry.js";
-import { getStoredToken } from "./tokenStorage.js";
-import { identityOwnerKey, permissionSessionKey } from "./appSessionPolicy.js";
+import { admitsSettingsPage, commitPluginPage, findPage, isPluginSettingsPage, readPluginPage, settingsPages, settingsNavigation } from "./settingsRegistry.js";
+import { identityOwnerKey, identitySessionKey } from "./appSessionPolicy.js";
 import { formatVersion } from "../shared/version.ts";
-import { createAccessSettingsState } from "./accessSettingsState.js";
 import { attention } from './attention.js';
 import { createDriverSettings } from './driverSettingsController.js';
 import { createOperationOwner } from "./operationOwner.js";
@@ -35,49 +32,33 @@ const defaultRegistry = {
  * this owner composes controllers, decisions, handoffs and host path reads. */
 export function createSettingsSession({
   config, applyBrand, writable, isVisible, setVisible, focus,
-  openAccess: notifyOpenAccess,
   permissionController,
   catalog = pluginCatalog, pages = settingsPages, registry = defaultRegistry,
-  refreshCatalog: refreshRuntimeCatalog = refreshPluginRuntimeCatalog, token = getStoredToken,
-  readPaths = getTree, readAccess = getAccessSettings, clock = globalThis, attentionRegistry = attention,
+  refreshCatalog: refreshRuntimeCatalog = refreshPluginRuntimeCatalog,
+  readPaths = getTree, clock = globalThis, attentionRegistry = attention,
   registerParticipant = registerSessionParticipant,
   createCore = createCoreSettingsAdapters, createPages = createSettingsPageState,
    createInventory = createPluginInventoryController, createPermissions = createPluginPermissionController,
    createDrivers = createDriverSettings, identityControllers = null,
 }) {
+  const sessionKey = identityControllers?.sessionKey ?? (() => identitySessionKey(config()));
+  const canManageVault = () => config()?.capabilities?.canManageVault === true;
+  const admitsPage = page => admitsSettingsPage(page, config()?.capabilities) || page?.id === "core:access" &&
+    (identityControllers?.access?.presentation.canCheckCreation || identityControllers?.access?.presentation.checkingCreation);
   const core = createCore({ getBrand: () => config().brand, writable, writeBrand: postBrand,
-    readBrand: async () => (await getConfig()).brand, applyBrand });
+    readBrand: async () => (await getConfig()).brand, applyBrand, sessionKey });
   const brandingSnapshot = computed(() => core.brandSnapshot()), keybindingSnapshot = computed(() => core.keybindings());
   const appearanceSnapshot = computed(() => core.appearance());
-  const access = createAccessSettingsState({ read:readAccess, readStatus:getConfig, completed:()=>{} });
-  const accessSummary = computed(() => ({ loading:access.state.loading, error:access.state.error,
-    rows:access.state.view ? [
-      {label:'Access mode',value:{password:'Password protected',none:'Open access',read_only:'Read-only'}[access.state.view.mode]},
-      {label:'Sign-in',value:access.state.view.mode === 'password' ? access.state.view.totpEnabled ? 'Password and authenticator' : 'Username and password' : 'Not required'},
-      {label:'Settings lock',value:access.state.view.settingsWritable ? 'Unlocked' : 'Locked'},
-    ] : [] }));
-  const accountName = computed(() => access.state.view?.username || '');
-  const accountSummary = computed(() => ({text:canLogout.value
-    ? accountName.value ? `Signed in as ${accountName.value}` : access.state.loading ? 'Reading current account…' : 'This session is signed in.'
-    : 'This session has no account.'}));
-  const stopAccessSession = watch([()=>permissionSessionKey(config(),token()),()=>config().accessRevision],()=>{
-    closePathChoice();
-    if (identityControllers) return;
-    const refresh=(access.state.loading || isVisible()) && ['access','account'].includes(currentPage.value?.kind);
-    access.invalidate();
-    if(refresh)void access.load();
-  },{flush:'sync'});
-  // Recheck at the intent boundary too: browser token storage is not reactive.
-  async function loadAccessSummary(){access.invalidate();return await access.load();}
+  const stopPathSession = watch(sessionKey, () => closePathChoice(), { flush: 'sync' });
   const attentionItems = attentionRegistry.items;
-  const canLogout = computed(() => config().capabilities ? config().principal?.kind === "account" : [authTypes.password, authTypes.totp].includes(config().authType));
   const versionLabel = computed(() => formatVersion({ version: config()?.version, revision: config()?.revision }));
-  const currentPageId = ref("core:appearance");
+  const appearanceId = "core:appearance", selectedPageId = ref(appearanceId);
   const expandedPluginId = ref(null), capturedPlugins=new Map();
   const ownsPermissions = !permissionController;
-  const permissionContext = () => config().capabilities
-    ? [permissionSessionKey(config(), token()), { active: config().capabilities.canManageVault === true, canWrite: writable() && config().capabilities.canManageVault === true }]
-    : ["settings", { active: true, canWrite: writable() }];
+  const permissionContext = () => {
+    const key = sessionKey(), active = key != null && canManageVault();
+    return [key, { active, canWrite: active && writable() }];
+  };
   const permissions = permissionController ?? createPermissions({ readView: getPluginPermissions, writeView: putPluginPermissions,
     readPending: getPluginPermissionRequests, decideRequest: decidePluginPermissionRequest, changed: refreshCatalog });
   if (ownsPermissions) permissions.setSession(...permissionContext());
@@ -94,7 +75,7 @@ export function createSettingsSession({
   let pathOwner;
   const pathChannel = deliver => ({ prepare(value) {
     const captured = { ...value };
-    if (captured.session !== permissionSessionKey(config(), token()) || captured.ticket !== pathTicket || captured.choice !== pathChoice.value || !writable()) void pathOwner.release(captured.operation);
+    if (captured.session !== sessionKey() || captured.ticket !== pathTicket || captured.choice !== pathChoice.value || !writable()) void pathOwner.release(captured.operation);
     return { value: captured };
   }, deliver });
   pathOwner = createOperationOwner({ owner: Object.freeze({}), dispatch: root => readPaths(root),
@@ -120,15 +101,15 @@ export function createSettingsSession({
     departureResolve?.(decision);
     departureResolve = null;
   }
-  const pageState = createPages({ registry, confirm: askDeparture,
-    getSession: () => permissionSessionKey(config(), token()),
-    isGuest: () => config().principal?.kind === "guest",
-    getRecoveryScope: () => config().capabilities?.canManageVault && config().accountId && config().vaultId ? identityOwnerKey(config()) : null,
-    canRead: page => !isPluginSettingsPage(page) || !config().capabilities || config().capabilities.canManageVault,
-    canWrite: writable });
+  const pageState = createPages({ registry, confirm: askDeparture, getSession: sessionKey,
+    getRecoveryScope: () => canManageVault() && config().accountId && config().vaultId ? identityOwnerKey(config()) : null,
+    isGuest: () => sessionKey() == null || config().principal?.kind === "guest",
+    captureSession: identityControllers?.captureSession,
+    captureCredential: identityControllers?.captureCredential,
+    canRead: page => !isPluginSettingsPage(page) || sessionKey() != null && canManageVault(), canWrite: writable });
   const inventory = createInventory({
     getCatalog: () => catalog.value,
-    getSession: () => permissionSessionKey(config(), token()),
+    getSession: sessionKey,
     writable,
     captureOwner: capturePluginCatalogOwnership, acknowledge: acknowledgePluginPolicy,
     writeEnabled: putPluginEnabled, writePolicy: putPluginPolicy, refreshCatalog,
@@ -136,7 +117,7 @@ export function createSettingsSession({
     confirm: request=>askDeparture({...request,pages:request.pages.map(page=>({...page,page:{...page.page,label:'Plugins'}}))}),
   });
   const inventorySnapshot = computed(() => inventory.snapshot());
-  const drivers = createDrivers({ writable, getSession:() => permissionSessionKey(config(), token()), confirm:askDeparture,
+  const drivers = createDrivers({ writable, getSession:sessionKey, confirm:askDeparture,
     confirmRemove:label => askRisk(`Remove ${label}?`, `Files in this vault and on ${label} stay as they are.`, 'Remove', 'danger') });
   const driverSnapshot = computed(() => drivers.state);
   const participant = {
@@ -161,7 +142,13 @@ export function createSettingsSession({
     const retained = pageState.pageIds().map(id => pageState.snapshot(id))
       .filter(snapshot => snapshot.dirty || snapshot.pending || snapshot.uncertain || snapshot.changedDescriptor)
       .map(snapshot => snapshot.page);
-    return [...new Map([...pages.value, ...retained].map(page => [page.id, page])).values()];
+    return [...new Map([...pages.value, ...retained].filter(admitsPage).map(page => [page.id, page])).values()];
+  });
+  const navigable = id => projectedPages.value.some(page => page.id === id);
+  const currentPageId = computed(() => {
+    const id = selectedPageId.value;
+    if (navigable(id)) return id;
+    return appearanceId;
   });
   const inventoryPages = computed(() => {
     const byOwner = Object.create(null);
@@ -251,8 +238,8 @@ export function createSettingsSession({
     if (!await askRisk("Discard choice?", "Discard this retained plugin choice? This does not undo a committed request. Turning a plugin on again is a new request.", 'Discard choice', 'danger')) return false;
     return inventory.discard();
   }
-  const stopPages = watch(pages, () => pageState.reconcile());
-  const stopCatalog = watch([catalog, writable, () => permissionSessionKey(config(), token())], () => {
+  const stopPages = watch([pages, sessionKey, canManageVault], () => pageState.reconcile());
+  const stopCatalog = watch([catalog, writable, sessionKey, canManageVault], () => {
     for(const plugin of catalog.value?.plugins ?? [])capturedPlugins.set(plugin.id,{...plugin});
     if (ownsPermissions) permissions.setSession(...permissionContext());
     permissions.reconcile(catalog.value);
@@ -264,10 +251,10 @@ export function createSettingsSession({
       if (!await managePlugin(page.slice('core:plugin-permissions:'.length))) return;
       page = undefined;
     }
-    const selected=page && registry.find(page);
+    const selected = page && navigable(page);
     if (selected && !await selectPage(page)) return;
     if (!selected && ['access','account'].includes(currentPage.value?.kind)) {
-      if (identityControllers) await identityControllers[currentPage.value.kind].load(); else await loadAccessSummary();
+      await identityControllers?.[currentPage.value.kind].load();
     }
     if (isVisible()) { focus(); return; }
     setVisible(true);
@@ -275,18 +262,20 @@ export function createSettingsSession({
     if (currentPage.value?.kind === 'sync') drivers.activate();
   }
   async function selectPage(id) {
+    if (!navigable(id)) return false;
     if (id !== currentPageId.value && identityControllers && !await identityControllers.resolveDeparture('changing pages')) return false;
     if (id !== currentPageId.value && !await drivers.resolveDeparture("changing pages")) return false;
     if (id !== currentPageId.value && !await inventory.resolveDeparture("changing pages")) return false;
     if (id !== currentPageId.value && !await pageState.resolveDeparture([currentPageId.value], "changing pages")) return false;
     if (id !== currentPageId.value && currentPage.value?.kind === 'plugins' && expandedPluginId.value && !await resolvePermissionDeparture([expandedPluginId.value], "changing pages")) return false;
     if (id !== currentPageId.value && !await resolveCoreDeparture('changing pages')) return false;
+    if (!navigable(id)) return false;
     core.stopCapture(); closePathChoice();
     if (id !== currentPageId.value) expandedPluginId.value = null;
-    currentPageId.value = id;
+    selectedPageId.value = id;
     if (currentPage.value?.kind === 'branding') core.loadBrand();
     if (['access','account'].includes(currentPage.value?.kind)) {
-      if (identityControllers) await identityControllers[currentPage.value.kind].load(); else await loadAccessSummary();
+      await identityControllers?.[currentPage.value.kind].load();
     }
     if (currentPage.value?.kind === 'plugin-page') await pageState.load(id);
     if (currentPage.value?.kind === 'sync') drivers.activate();
@@ -373,7 +362,6 @@ export function createSettingsSession({
   }
   async function cancelDriverAdd() { return await drivers.cancelAdd(); }
   async function resetCoreBranding() { if (await askRisk('Reset branding?', core.resetMessage(), 'Reset branding', 'danger')) await core.saveBrand(true); }
-  async function openAccess() { if (await requestClose()) notifyOpenAccess(); }
   function parentPath(path) { return path.split('/').slice(0, -1).join('/'); }
   function closePathChoice() { pathTicket++; pathChoice.value = null; pathEntries.value = []; pathLoading.value=false; return true; }
   async function browseField(id, field) {
@@ -382,7 +370,7 @@ export function createSettingsSession({
   }
   async function loadPathChoices(root) {
     const choice = pathChoice.value; if (!choice) return; const ticket = ++pathTicket; pathChoiceError.value = ''; pathLoading.value=true;
-    const session = permissionSessionKey(config(), token()), operation = pathOwner.operation();
+    const session = sessionKey(), operation = pathOwner.operation();
     let timer;
     try {
       const { value: tree } = await Promise.race([pathOwner.dispatch(operation, root), new Promise((_, reject) => { timer = clock.setTimeout(() => reject(Error('Host path choices could not be loaded within the deadline.')), 5000); })]);
@@ -402,22 +390,22 @@ export function createSettingsSession({
   const choosePathEntry = entry => entry.directory ? loadPathChoices(entry.path) : selectPath(entry.path);
   function dispose() {
     decideDeparture("cancel"); resolveRisk(false); closePathChoice(); disposeParticipant();
-    drivers.dispose(); inventory.dispose(); const pagesClosing = pageState.dispose(); core.dispose(); access.dispose(); if (ownsPermissions) permissions.dispose();
-    stopPages(); stopCatalog(); stopAccessSession();
+    drivers.dispose(); inventory.dispose(); const pagesClosing = pageState.dispose(); core.dispose(); if (ownsPermissions) permissions.dispose();
+    stopPages(); stopCatalog(); stopPathSession();
     return Promise.all([pathOwner.dispose(), pagesClosing]);
   }
   return {
-    state: readonly(reactive({ brandingSnapshot, keybindingSnapshot, appearanceSnapshot, accessSummary, accountName, accountSummary, attentionItems, canLogout, versionLabel, currentPageId,
+    state: readonly(reactive({ brandingSnapshot, keybindingSnapshot, appearanceSnapshot, attentionItems, versionLabel, currentPageId,
       riskVisible, riskTitle, riskMessage, riskConfirmText, riskConfirmStyle, pathChoice:pathChoiceView, pathEntries, pathChoiceError, pathCrumbs, pathLoading,
       departureVisible, departureMessage, departureCanSave, departureConfirmText, inventorySnapshot,
         groupedPages, inventoryPages, currentSnapshot, currentPage, currentPageStatus, currentPageIsPlugin, catalogPlugins, catalogPolicy, driverSnapshot,
       pluginRows, autoEnableView, pluginPageHeader, expandedPluginId })),
-    core, permissions, pageState, inventory, drivers, identityControllers,
+    core, permissions, pageState, inventory, drivers, identityControllers, confirmDeparture: askDeparture,
     setRiskVisible: value => { riskVisible.value = value; },
     setDepartureVisible: value => { departureVisible.value = value; },
     openSettings, selectPage, requestClose, reloadCurrentPage, decideDeparture,
     togglePlugin, togglePluginRow, toggleAutoEnable, toggleLineNumbers, toggleDebug, discardInventoryChoice, managePlugin, toggleExpansion,
     approveScope, deleteScope, togglePermissionMaster, permissionHostAction, discardPermission, resolveRisk,
-    cancelBranding, discardDriverDraft, cancelDriverAdd, resetCoreBranding, openAccess, parentPath, closePathChoice, browseField, loadPathChoices, selectPath, choosePathEntry, dispose,
+    cancelBranding, discardDriverDraft, cancelDriverAdd, resetCoreBranding, parentPath, closePathChoice, browseField, loadPathChoices, selectPath, choosePathEntry, dispose,
   };
 }

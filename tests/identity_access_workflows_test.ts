@@ -398,7 +398,17 @@ Deno.test("vault access disclosure: an unread update capability snapshot cannot 
     assertEquals(f.acl.effectiveLevel(f.a), "view");
     const outcome = f.access.outcome(f.a, updateId);
     f.policy({ [f.bob.id]: "admin" });
-    await assertRejects(() => f.read(body), StoredConfigConflict, CONFLICT);
+    assertEquals(await f.read(body), {
+      updateId,
+      committed: true,
+      capabilities: {
+        canRead: false,
+        canEdit: false,
+        canManageVault: false,
+        canManageOwnAccount: true,
+        canCreateVault: true,
+      },
+    });
     await assertRejects(() => f.read(outcome), StoredConfigConflict, CONFLICT);
     assertEquals(await f.read(f.access.outcome(f.a, updateId)), {
       matched: false,

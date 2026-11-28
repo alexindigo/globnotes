@@ -4,6 +4,14 @@
 guide records what a v2 install must do to move to v3, as decided so far, and grows
 as the v3 pieces are designed. Items marked **Open** are not decided yet.
 
+**Current development runtime:** Instance accounts and per-vault access are
+active for the single configured vault `globnotes`. The planned v2 import tool
+and multi-vault registry described below are not implemented in this runtime.
+Do not point it at a v2 install to upgrade it. Recognized legacy authentication
+records stop startup when no imported identity is present; leave the original
+files intact. For fresh installs and supported offline commands on compatible
+v3 state, see [Accounts and vault access](docs/accounts-and-access.md).
+
 ## Staying on v2
 
 v3 is a major release with breaking changes. Nobody has to upgrade: v2 keeps
@@ -121,7 +129,7 @@ Reading, rendering, hooks, settings, private data, endpoints and `ctx.fs` are
 unchanged. Details: [plugin-api.md](docs/plugin-api.md) "Writes state their base"
 and "Contract version".
 
-## Steps (as decided so far)
+## Planned upgrade steps (requires the v2 importer)
 
 1. **Back up** your notes folder and its `.globnotes` folder (or your
    `GLOBNOTES_INDEX_PATH` folder).
@@ -166,9 +174,8 @@ and "Contract version".
 
 The layered-configuration startup now uses these names without aliases.
 `N` is the upper-case vault name with every underscore doubled (`my_notes` ->
-`MY__NOTES`). The current runtime serves only `globnotes`; identity and registry
-work and the explicit v2 import tool remain separate future pieces. Do not point
-this intermediate stack at a v2 install expecting an automatic conversion.
+`MY__NOTES`). The current runtime serves only `globnotes`; registry work and
+the explicit v2 import tool are separate future pieces.
 
 | # | v2 | v3 |
 |---|---|---|
@@ -176,8 +183,8 @@ this intermediate stack at a v2 install expecting an automatic conversion.
 | 2 | `GLOBNOTES_PATH_PREFIX` | `GLOBNOTES__SERVER_PATHPREFIX` |
 | 3 | `GLOBNOTES_PATH` | base folder `GLOBNOTES__VAULTS_BASEPATH`; a vault elsewhere `GLOBNOTES_<VAULT>_PATH` |
 | 4 | `GLOBNOTES_INDEX_PATH` | `GLOBNOTES__METADATA_PATH` selects a base: vault state `<base>/<name>/`, instance state `<base>/_/`. No prototype metadata aliases or per-vault `_INDEX` |
-| 5 | `GLOBNOTES_AUTH_TYPE`, `GLOBNOTES_USERNAME`, `GLOBNOTES_PASSWORD`, `GLOBNOTES_SECRET_KEY`, `GLOBNOTES_TOTP_KEY` | Removed, no env replacements. The current local bridge retains guarded setup/access records; future instance accounts and vault ACLs own the final model |
-| 6 | `GLOBNOTES_READ_ONLY_SETTINGS` | Removed. The current saved access lock remains until the identity piece supplies Admin capabilities |
+| 5 | `GLOBNOTES_AUTH_TYPE`, `GLOBNOTES_USERNAME`, `GLOBNOTES_PASSWORD`, `GLOBNOTES_SECRET_KEY`, `GLOBNOTES_TOTP_KEY` | Removed, no direct replacements. Instance accounts and the vault ACL own access. Fresh-only seeding uses `GLOBNOTES__ACCOUNTS_FIRST_LOGIN` and `GLOBNOTES__ACCOUNTS_FIRST_PASSWORD`; an optional `GLOBNOTES_GLOBNOTES_ADMIN` declaration grants Admin separately |
+| 6 | `GLOBNOTES_READ_ONLY_SETTINGS` | Removed. Vault settings writes require Admin; there is no saved settings lock |
 | 7 | `GLOBNOTES_BRAND_*`, `GLOBNOTES_QUICK_ACCESS_*` | `GLOBNOTES_N_BRAND_NAME`, `_BRAND_ACCENT`, `_QUICKACCESS_HIDE`, `_TITLE`, `_TERM`, `_SORT`, `_LIMIT` |
 | 8 | `GLOBNOTES_AUTO_ENABLE_PLUGINS` | Per vault, e.g. `GLOBNOTES_<VAULT>_PLUGINS_AUTOENABLE` |
 | 9 | `GLOBNOTES_INDEX_BATCH_SIZE`, `_INDEX_BATCH_DELAY`, `_SCAN_CACHE_TTL`, `_RENDER_WORKERS` | `GLOBNOTES__INDEX_BATCHSIZE`, `__INDEX_BATCHDELAY`, `__INDEX_SCANCACHETTL`, `__PLUGINS_RENDERWORKERS` |

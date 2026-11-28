@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { defineComponent, h } from "vue";
+import { defineComponent, h, nextTick, ref } from "vue";
 import { flushPromises, mount } from "@vue/test-utils";
 import DeclarativeSettingsPage from "../components/DeclarativeSettingsPage.vue";
 import { createSettingsPageState } from "../settingsPageState.js";
@@ -9,6 +9,33 @@ let controller, wrapper;
 afterEach(() => { wrapper?.unmount(); controller?.dispose(); wrapper = controller = null; });
 
 describe("native settings drafts", () => {
+  it("renders the same native draft input while authority is being revalidated", async () => {
+    const session = ref("before"), reply = Promise.withResolvers();
+    const descriptor = { fields: [{ key: "limit", label: "Limit", type: "number", default: 5 }] };
+    const page = { id: "plugin:p:test", descriptor, available: true };
+    const response = { values: { limit: 5 }, revision: 1 };
+    const read = vi.fn().mockResolvedValueOnce(response).mockReturnValueOnce(reply.promise), write = vi.fn();
+    controller = createSettingsPageState({ getSession: () => session.value, getRecoveryScope: () => "same-account-and-vault",
+      captureCredential: () => () => true,
+      registry: { find: () => page, read, commit: write }, confirm: async () => "cancel" });
+    await controller.load(page.id);
+    controller.edit(page.id, "limit", "");
+    wrapper = mount(defineComponent({ render: () => h(DeclarativeSettingsPage, { page: descriptor, snapshot: controller.snapshot(page.id) }) }));
+    const input = wrapper.get("input#settings-field-limit").element;
+    try {
+      session.value = "after";
+      controller.reconcile();
+      await nextTick();
+      expect(controller.snapshot(page.id).committed).toEqual({});
+      expect(read).toHaveBeenCalledTimes(2);
+      expect(wrapper.get("input#settings-field-limit").element).toBe(input);
+      expect([input.value, input.readOnly]).toEqual(["", true]);
+      expect(await controller.commit(page.id)).toBe(false);
+      reply.resolve(response); await controller.load(page.id); await nextTick();
+      expect(wrapper.get("input#settings-field-limit").element).toBe(input);
+      expect([input.value, input.readOnly, write.mock.calls]).toEqual(["", false, []]);
+    } finally { reply.resolve(response); }
+  });
   it('r2 B10 preserves a stored null instead of displaying a default', async () => {
     const page={id:'plugin:null:p',descriptor:{fields:[{key:'value',type:'select',default:'default',options:[{label:'None',value:null},{label:'Default',value:'default'}]}]}};
     controller=createSettingsPageState({registry:{find:()=>page,read:async()=>({values:{value:null},revision:0})},confirm:async()=>'cancel'});

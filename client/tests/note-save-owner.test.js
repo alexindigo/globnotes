@@ -89,7 +89,7 @@ describe("save owner submission and acknowledgement", () => {
   it.each(["save", "rename"])("newer %s queued for authentication keeps its held receipt without the non-recovering error notification", async intent => {
     const login = deferred(), f = fixture({ requestAuthentication: () => login.promise });
     f.owner.start(); f.edit("A"); f.owner.save(); await flush();
-    f.sent[0].reject({ response: { status: 401, data: { detail: "Invalid authentication credentials" } } }); await flush();
+    f.sent[0].reject({ response: { status: 401, data: { code: "credentials_refused" } } }); await flush();
     f.edit("B", intent === "rename" ? "Q" : undefined);
     const receipt = intent === "rename" ? (f.owner.rename(), null) : f.owner.save();
     if (receipt) expect(receipt.held).toBe(true);
@@ -104,7 +104,7 @@ describe("save owner submission and acknowledgement", () => {
     const f = fixture({ requestAuthentication, authenticationRequired }); f.owner.start();
     f.edit("A"); const receipt = f.owner.save(); await flush();
     f.edit("B"); f.owner.save(); f.edit("C");
-    f.sent[0].reject({ response: { status: 401, data: { detail: "Invalid authentication credentials" } } }); await flush();
+    f.sent[0].reject({ response: { status: 401, data: { code: "credentials_refused" } } }); await flush();
     expect(requestAuthentication).toHaveBeenCalledTimes(1);
     expect(authenticationRequired).toHaveBeenCalledTimes(1);
     expect(f.adapters.failed).not.toHaveBeenCalled();
@@ -123,7 +123,7 @@ describe("save owner submission and acknowledgement", () => {
     const login = deferred(), again = deferred();
     const requestAuthentication = vi.fn().mockReturnValueOnce(login.promise).mockReturnValueOnce(again.promise);
     const f = fixture({ requestAuthentication }); f.owner.start(); f.edit("A"); f.owner.save(); await flush();
-    f.sent[0].reject({ response: { status: 401, data: { detail: "Invalid authentication credentials" } } }); await flush();
+    f.sent[0].reject({ response: { status: 401, data: { code: "credentials_refused" } } }); await flush();
     login.resolve(false); await flush();
     expect(f.owner.queueState().unresolved).toBe(true); expect(f.buffer()).toBe("A"); expect(f.sent).toHaveLength(1);
     f.owner.save(); await flush(); expect(requestAuthentication).toHaveBeenCalledTimes(2);
@@ -133,7 +133,7 @@ describe("save owner submission and acknowledgement", () => {
   it.each(["dispose", "discard", "replace"])("late sign-in cannot replay a retired job (%s)", async retirement => {
     const login = deferred(), f = fixture({ requestAuthentication: () => login.promise });
     f.owner.start(); f.edit("A"); f.owner.save(); await flush();
-    f.sent[0].reject({ response: { status: 401, data: { detail: "Invalid authentication credentials" } } }); await flush();
+    f.sent[0].reject({ response: { status: 401, data: { code: "credentials_refused" } } }); await flush();
     if (retirement === "dispose") f.owner.dispose();
     else if (retirement === "discard") f.owner.discard();
     else f.owner.start();

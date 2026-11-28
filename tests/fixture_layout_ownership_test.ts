@@ -1,8 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-only
-import {
-  accountScenario,
-  publicScenario,
-} from "./helpers/fixture_scenarios.ts";
+import { publicScenario } from "./helpers/fixture_scenarios.ts";
 import {
   assert,
   assertEquals,
@@ -445,7 +442,7 @@ for (const required of [false, true]) {
   });
 }
 
-Deno.test("native fixture scenario: prefix boot merges a partial legacy seed into the existing public Edit record", () =>
+Deno.test("native fixture scenario: prefix account boot preserves old configuration as evidence and uses issued policy", () =>
   fixtureScope(async (scope) => {
     const input = await nativeLayout(scope);
     const plugin = `${input.state}/plugins/gps08`;
@@ -468,28 +465,32 @@ Deno.test("native fixture scenario: prefix boot merges a partial legacy seed int
       JSON.stringify({ enabled: ["gps08"], autoEnable: false }),
     );
     const filename = `${input.state}/config.json`;
-    const previous = { auth_type: "none", unrelated_fixture: { kept: true } };
-    await Deno.writeTextFile(filename, JSON.stringify(previous));
+    const previous =
+      '{"auth_type":"read_only","unrelated_fixture":{"kept":true}}\n';
+    await Deno.writeTextFile(filename, previous);
     const server = (await scope.acquire(() =>
       bootPrefixAuthFixture({
         ...input,
         prefix: "/notes",
         setup: false,
-        fixtureScenario: accountScenario(publicScenario().identity, {
-          read_only_settings: true,
-        }),
+        fixtureScenario: publicScenario(),
       }), (server) => server.close())).value;
     const config = await fetch(`${server.baseUrl}/notes/_/api/config`);
-    const { authType, settingsWritable } = await config.json();
-    assertEquals([config.status, authType, settingsWritable], [
+    const { capabilities, principal } = await config.json();
+    assertEquals([
+      config.status,
+      principal?.kind,
+      capabilities?.canRead,
+      capabilities?.canEdit,
+      capabilities?.canManageVault,
+    ], [
       200,
-      "none",
+      "guest",
+      true,
+      true,
       false,
     ]);
-    assertEquals(JSON.parse(await Deno.readTextFile(filename)), {
-      ...previous,
-      read_only_settings: true,
-    });
+    assertEquals(await Deno.readTextFile(filename), previous);
   }));
 
 Deno.test("native layout review: failed log acquisition preserves existing evidence and reaps before rejection", async () => {
@@ -874,7 +875,7 @@ Deno.test("layout owner: simultaneous default layouts isolate complete roots wit
       "second layout\n",
     );
     for (const layout of layouts) {
-      assert((await Deno.stat(`${layout.metadata}/config.json`)).isFile);
+      assert((await Deno.stat(`${layout.metadata}/access.json`)).isFile);
     }
   });
   for (const root of roots) {
@@ -1048,7 +1049,7 @@ Deno.test("layout owner: caller-relative paths are absolute before child launch 
       await Deno.readTextFile(`${vault}/Relative.md`),
       "resolved before spawn\n",
     );
-    assert((await Deno.stat(`${metadata}/globnotes/config.json`)).isFile);
+    assert((await Deno.stat(`${metadata}/globnotes/access.json`)).isFile);
     await assertRejects(
       () =>
         bootServer({ GLOBNOTES__METADATA_PATH: `${root.value}/other` }, {
@@ -1130,7 +1131,7 @@ Deno.test("layout owner: borrowed missing metadata is left to real product prefl
       "Seeded",
       "explicit seeding still works\n",
     );
-    assert((await Deno.stat(`${metadata}/globnotes/config.json`)).isFile);
+    assert((await Deno.stat(`${metadata}/globnotes/access.json`)).isFile);
     assertEquals(
       await Deno.readTextFile(`${vault}/Seeded.md`),
       "explicit seeding still works\n",

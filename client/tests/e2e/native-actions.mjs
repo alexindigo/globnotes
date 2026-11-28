@@ -17,8 +17,10 @@ export function editableControl(el) {
   return !!el?.isConnected && el.matches('input:not([type="hidden"]),textarea,select') &&
     !el.matches(':disabled') && !el.readOnly && !el.closest('[inert]');
 }
-export async function clickReady(session, selector, { text } = {}) {
-  const locate = text === undefined
+export async function clickReady(session, selector, { text, editable = false } = {}) {
+  const locate = editable
+    ? `(()=>{const el=document.querySelector(${JSON.stringify(selector)});return (${editableControl.toString()})(el)?el:null;})()`
+    : text === undefined
     ? `document.querySelector(${JSON.stringify(selector)})`
     : `[...document.querySelectorAll(${JSON.stringify(selector)})].find(el=>el.textContent.trim()===${JSON.stringify(text)}&&(${visibleElement.toString()})(el))`;
   await session.evaluate("document.fonts.ready.then(()=>true)");

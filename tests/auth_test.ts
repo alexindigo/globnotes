@@ -1,497 +1,149 @@
 // SPDX-License-Identifier: LGPL-3.0-only
-import { signedInScenario } from "./helpers/fixture_scenarios.ts";
-
-/**
- * Integration tests for the setup wizard and auth flows — the Deno port
- * of tests/test_setup.py. Boots real server subprocesses against temp
- * vaults. Write-gating coverage lands with the notes/files endpoints
- * (commits 4–6); the Python suite's cases here are fully covered.
- */
-
-import { assert, assertEquals } from "@std/assert";
-import { authenticatorCode, TOTP_STEP_MS, totpStep } from "./helpers/totp.ts";
-import { settledTotpNow } from "./helpers/totp_live.ts";
+import { assertEquals, assertMatch, assertRejects } from "@std/assert";
+import { withFixtureDirectory } from "./helpers/fixture_layout.ts";
 import { bootServer } from "./helpers/boot.ts";
+import { createUuid } from "../shared/uuid.ts";
+import { identityTokenScope } from "../shared/identity_token.ts";
 
-Deno.test("auth: setup mode", async (t) => {
-  const server = await bootServer({});
-  try {
-    await t.step("setup status reports required", async () => {
-      const res = await fetch(`${server.baseUrl}/_/api/setup`);
-      assertEquals(res.status, 200);
-      assertEquals((await res.json()).setupRequired, true);
-    });
-
-    await t.step("config reports setup required", async () => {
-      const res = await fetch(`${server.baseUrl}/_/api/config`);
-      const body = await res.json();
-      assertEquals(body.setupRequired, true);
-      assertEquals(body.authType, null);
-    });
-
-    await t.step("authed APIs return 503 until setup", async () => {
-      const res = await fetch(`${server.baseUrl}/_/api/auth-check`);
-      assertEquals(res.status, 503);
-      assertEquals((await res.json()).detail, "setup_required");
-    });
-
-    await t.step("public endpoints work during setup", async () => {
-      const health = await fetch(`${server.baseUrl}/_/api/health`);
-      assertEquals(health.status, 200);
-      const token = await fetch(`${server.baseUrl}/_/api/token`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ username: "x", password: "y" }),
-      });
-      // Python: route registered (auth_type unset) but no auth instance.
-      assertEquals(token.status, 400);
+for (const everybody of ["none", "view", "edit"] as const) {
+  Deno.test(`first account HTTP: ${everybody} persists across restart and never grants guest Admin`, () =>
+    withFixtureDirectory(async (root, scope) => {
+      await Deno.writeTextFile(`${root}/Seed.md`, "first account note");
+      const env = {
+        GLOBNOTES_GLOBNOTES_PATH: root,
+        GLOBNOTES__VAULTS_BASEPATH: root,
+      };
+      const boot = async () =>
+        (await scope.acquire(() => bootServer(env), (server) => server.close()))
+          .value;
+      let server = await boot();
+      async function api(
+        path: string,
+        method = "GET",
+        body?: unknown,
+        headers?: Record<string, string>,
+      ) {
+        const res = await fetch(`${server.baseUrl}/_/api/${path}`, {
+          method,
+          headers: { "content-type": "application/json", ...headers },
+          body: body === undefined ? undefined : JSON.stringify(body),
+          signal: AbortSignal.timeout(5000),
+        });
+        const text = await res.text();
+        return {
+          status: res.status,
+          body: text && JSON.parse(text),
+          challenge: res.headers.get("www-authenticate"),
+        };
+      }
+      assertEquals((await api("setup")).body, { setupRequired: true });
+      const before = await api("config");
+      assertEquals([
+        before.status,
+        before.body.setupRequired,
+        before.body.principal,
+        before.body.vaultId,
+      ], [200, true, { kind: "guest" }, null]);
+      const notReady = await api("notes/Seed");
+      assertEquals([notReady.status, notReady.body], [503, {
+        detail: "setup_required",
+        code: "setup_required",
+      }]);
+      assertEquals((await api("health")).status, 200);
       assertEquals(
-        (await token.json()).detail,
-        "Authentication is not enabled.",
+        (await api("token", "POST", { username: "x", password: "y" })).status,
+        401,
       );
-    });
-  } finally {
-    await server.close();
-  }
-});
-
-Deno.test("auth: read_only flow", async (t) => {
-  const server = await bootServer({});
-  try {
-    const setup = await fetch(`${server.baseUrl}/_/api/setup`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ mode: "read_only" }),
-    });
-    assertEquals(setup.status, 200);
-    assertEquals((await setup.json()).setupRequired, false);
-
-    await t.step("reads work without a token", async () => {
-      const res = await fetch(`${server.baseUrl}/_/api/auth-check`);
-      assertEquals(res.status, 200);
-    });
-
-    await t.step("token endpoint 404s in read-only", async () => {
-      const res = await fetch(`${server.baseUrl}/_/api/token`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ username: "x", password: "y" }),
-      });
-      assertEquals(res.status, 404);
-    });
-
-    await t.step("the choice is persisted", async () => {
-      const config = JSON.parse(
-        await Deno.readTextFile(`${server.vault}/.globnotes/config.json`),
-      );
-      assertEquals(config.auth_type, "read_only");
-    });
-  } finally {
-    await server.close();
-  }
-
-  await t.step("read_only persists across restart", async () => {
-    const restarted = await bootServer({
-      GLOBNOTES_GLOBNOTES_PATH: server.vault,
-    });
-    try {
-      const res = await fetch(`${restarted.baseUrl}/_/api/setup`);
-      assertEquals((await res.json()).setupRequired, false);
-      const check = await fetch(`${restarted.baseUrl}/_/api/auth-check`);
-      assertEquals(check.status, 200);
-    } finally {
-      await restarted.close();
-    }
-    await Deno.remove(server.vault, { recursive: true });
-  });
-});
-
-Deno.test("auth: disable-auth flow", async (t) => {
-  const server = await bootServer({});
-  try {
-    const setup = await fetch(`${server.baseUrl}/_/api/setup`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ mode: "none" }),
-    });
-    assertEquals(setup.status, 200);
-    assertEquals((await setup.json()).setupRequired, false);
-
-    await t.step("data APIs work immediately", async () => {
-      const res = await fetch(`${server.baseUrl}/_/api/auth-check`);
-      assertEquals(res.status, 200);
-    });
-
-    await t.step("the choice is persisted", async () => {
-      const config = JSON.parse(
-        await Deno.readTextFile(`${server.vault}/.globnotes/config.json`),
-      );
-      assertEquals(config.auth_type, "none");
-    });
-
-    await t.step("setup cannot be repeated", async () => {
-      const res = await fetch(`${server.baseUrl}/_/api/setup`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ mode: "none" }),
-      });
-      assertEquals(res.status, 409);
-    });
-  } finally {
-    await server.close();
-    await Deno.remove(server.vault, { recursive: true });
-  }
-});
-
-Deno.test("auth: password flow", async (t) => {
-  const server = await bootServer({});
-  try {
-    const setup = await fetch(`${server.baseUrl}/_/api/setup`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        mode: "password",
-        username: "Alice",
-        password: "secret",
-      }),
-    });
-    assertEquals(setup.status, 200);
-
-    await t.step("data APIs now require a token", async () => {
-      const res = await fetch(`${server.baseUrl}/_/api/auth-check`);
-      assertEquals(res.status, 401);
+      const request = {
+        username: "ALICE",
+        password: "secret-password",
+        everybody,
+        updateId: createUuid(),
+      };
       assertEquals(
-        res.headers.get("www-authenticate"),
-        "Bearer",
+        (await api("setup", "POST", { ...request, password: "" })).status,
+        422,
+      );
+      const accountFile = `${root}/.globnotes/accounts.json`;
+      await assertRejects(
+        () => Deno.readTextFile(accountFile),
+        Deno.errors.NotFound,
+      );
+      const setup = await api("setup", "POST", request);
+      assertEquals([
+        setup.status,
+        setup.body.setupRequired,
+        setup.body.everybody,
+        setup.body.token_type,
+      ], [200, false, everybody, "bearer"]);
+      const bearer = { authorization: `Bearer ${setup.body.access_token}` };
+      assertEquals((await api("setup", "POST", request)).status, 409);
+      assertEquals((await api("setup/reset", "POST", {}, bearer)).status, 405);
+      const accountBytes = await Deno.readTextFile(accountFile);
+      const { accounts: [person] } = JSON.parse(accountBytes);
+      assertEquals(person.login, "alice");
+      assertMatch(person.passwordHash, /^pbkdf2_sha256\$/);
+      assertEquals(accountBytes.includes(request.password), false);
+      assertMatch(
+        JSON.parse(await Deno.readTextFile(`${root}/.globnotes/sessions.json`))
+          .signingKey,
+        /^[a-f0-9]{64}$/,
       );
       assertEquals(
-        (await res.json()).detail,
-        "Invalid authentication credentials",
+        JSON.parse(await Deno.readTextFile(`${root}/.globnotes/access.json`))
+          .everybody,
+        everybody,
       );
-    });
-
-    let token = "";
-    await t.step("login works, username lowercased", async () => {
-      const res = await fetch(`${server.baseUrl}/_/api/token`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ username: "alice", password: "secret" }),
-      });
-      assertEquals(res.status, 200);
-      const body = await res.json();
-      assert(typeof body.access_token === "string");
-      assertEquals(body.token_type, "bearer");
-      token = body.access_token;
-    });
-
-    await t.step("bearer token authenticates", async () => {
-      const res = await fetch(`${server.baseUrl}/_/api/auth-check`, {
-        headers: { authorization: `Bearer ${token}` },
-      });
-      assertEquals(res.status, 200);
-      assertEquals(await res.json(), "OK");
-    });
-
-    await t.step("cookie token authenticates", async () => {
-      const res = await fetch(`${server.baseUrl}/_/api/auth-check`, {
-        headers: { cookie: `token=${token}` },
-      });
-      assertEquals(res.status, 200);
-    });
-
-    await t.step("wrong password is rejected", async () => {
-      const res = await fetch(`${server.baseUrl}/_/api/token`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ username: "alice", password: "wrong" }),
-      });
-      assertEquals(res.status, 401);
-      assertEquals((await res.json()).detail, "Invalid login details.");
-    });
-
-    await t.step("stored password is hashed, not plaintext", async () => {
-      const config = JSON.parse(
-        await Deno.readTextFile(`${server.vault}/.globnotes/config.json`),
+      if (everybody === "none") {
+        assertEquals((await api("notes/Seed")).status, 403);
+      } else {assertEquals(
+          (await api("notes/Seed")).body.content,
+          "first account note",
+        );}
+      assertEquals(
+        (await api("notes", "POST", { path: "Guest", content: "guest note" }))
+          .status,
+        everybody === "edit" ? 200 : 403,
       );
-      assert(config.password_hash.startsWith("pbkdf2_sha256$"));
-      assert(!config.password_hash.includes("secret"));
-      assertEquals(config.username, "alice");
-      assert(typeof config.secret_key === "string");
-      assertEquals(config.secret_key.length, 64);
-    });
-  } finally {
-    await server.close();
-  }
-
-  await t.step("setup persists across restart", async () => {
-    const restarted = await bootServer({
-      GLOBNOTES_GLOBNOTES_PATH: server.vault,
-    });
-    try {
-      const res = await fetch(`${restarted.baseUrl}/_/api/setup`);
-      assertEquals((await res.json()).setupRequired, false);
-      const check = await fetch(`${restarted.baseUrl}/_/api/auth-check`);
-      assertEquals(check.status, 401);
-      const login = await fetch(`${restarted.baseUrl}/_/api/token`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ username: "alice", password: "secret" }),
+      const refused = await api("access", "PUT", {});
+      assertEquals([refused.status, refused.body], [403, {
+        detail: "This account cannot perform that operation.",
+        code: "operation_not_permitted",
+      }]);
+      assertEquals(
+        (await api("notes/Seed", "GET", undefined, bearer)).body.content,
+        "first account note",
+      );
+      const cookieName = identityTokenScope("").cookieName;
+      const cookie = { cookie: `${cookieName}=${setup.body.access_token}` };
+      assertEquals(
+        (await api("notes/Seed", "GET", undefined, cookie)).body.content,
+        "first account note",
+      );
+      const invalid = await api("token", "POST", {
+        username: "alice",
+        password: "bad",
       });
-      assertEquals(login.status, 200);
-    } finally {
-      await restarted.close();
-    }
-    await Deno.remove(server.vault, { recursive: true });
-  });
-});
-
-Deno.test("auth: password flow requires credentials", async () => {
-  const server = await bootServer({});
-  try {
-    const res = await fetch(`${server.baseUrl}/_/api/setup`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ mode: "password", username: "", password: "" }),
-    });
-    assertEquals(res.status, 400);
-  } finally {
-    await server.close();
-    await Deno.remove(server.vault, { recursive: true });
-  }
-});
-
-Deno.test("auth: explicitly seeded private credentials replace the fixture's public record", async () => {
-  const vault = await Deno.makeTempDir();
-  try {
-    await Deno.mkdir(`${vault}/.globnotes`, { recursive: true });
-    await Deno.writeTextFile(
-      `${vault}/.globnotes/config.json`,
-      JSON.stringify({ auth_type: "none" }),
-    );
-    const server = await bootServer({
-      GLOBNOTES_GLOBNOTES_PATH: vault,
-      fixtureScenario: signedInScenario(
-        { login: "bob", password: "hunter2" },
-        {},
-        { secret_key: "testsecret" },
-      ),
-    });
-    try {
-      const setup = await fetch(`${server.baseUrl}/_/api/setup`);
-      assertEquals((await setup.json()).setupRequired, false);
-      const check = await fetch(`${server.baseUrl}/_/api/auth-check`);
-      assertEquals(check.status, 401);
-      const login = await fetch(`${server.baseUrl}/_/api/token`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ username: "bob", password: "hunter2" }),
-      });
-      assertEquals(login.status, 200);
-    } finally {
+      assertEquals([invalid.status, invalid.body, invalid.challenge], [401, {
+        detail: "Invalid authentication credentials.",
+        code: "credentials_refused",
+      }, "Bearer"]);
       await server.close();
-    }
-  } finally {
-    await Deno.remove(vault, { recursive: true });
-  }
-});
-
-Deno.test("auth: password+TOTP wizard flow", async (t) => {
-  // The wizard enrolment path: mint → prove with a live code → persist
-  // as if env-configured. Codes come from an independent standard reference,
-  // not the same OTP implementation that performs verification.
-  const stepMs = 30_000;
-  const codeFor = authenticatorCode;
-
-  const server = await bootServer({});
-  try {
-    let key = "";
-    let secret = "";
-    await t.step(
-      "enrolment mints a bundle while setup is pending",
-      async () => {
-        const res = await fetch(
-          `${server.baseUrl}/_/api/setup/totp-enrolment`,
-          {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ username: "alice" }),
-          },
-        );
-        assertEquals(res.status, 200);
-        const body = await res.json();
-        assert(typeof body.key === "string" && /^[A-Z2-7]{32}$/.test(body.key));
-        assert(body.uri.startsWith("otpauth://totp/globnotes:alice"));
-        assert(body.uri.includes("issuer=globnotes"));
-        assert(body.qr.startsWith("data:image/png;base64,"));
-        key = body.key;
-        secret = new URL(body.uri).searchParams.get("secret")!;
-        assertEquals(secret, key);
-        // The manual-entry form is the base32 secret, same as the boot log.
-        assertEquals(body.secret, secret);
-        assert(body.uri.includes(`secret=${secret}`));
-      },
-    );
-
-    await t.step(
-      "a wrong code keeps setup pending and writes nothing",
-      async () => {
-        // Deterministically wrong: a code outside every step the verifier
-        // accepts right now (000000 could in principle be valid).
-        const now = await settledTotpNow();
-        const valid = new Set(
-          await Promise.all(
-            [-1, 0, 1].map((offset) =>
-              codeFor(secret, now + offset * TOTP_STEP_MS)
-            ),
-          ),
-        );
-        const wrong = ["000000", "000001", "000002", "000003"].find((code) =>
-          !valid.has(code)
-        )!;
-        const res = await fetch(`${server.baseUrl}/_/api/setup`, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            mode: "password",
-            username: "alice",
-            password: "secret",
-            totpKey: key,
-            totpCode: wrong,
-          }),
-        });
-        assertEquals(res.status, 400);
-        assertEquals(
-          (await res.json()).detail,
-          "That code doesn't match this key - wait for a fresh code and try again.",
-        );
-        const status = await fetch(`${server.baseUrl}/_/api/setup`);
-        assertEquals((await status.json()).setupRequired, true);
-        const configExists = await Deno.stat(
-          `${server.vault}/.globnotes/config.json`,
-        ).then(() => true).catch(() => false);
-        assertEquals(configExists, false);
-      },
-    );
-
-    let enrolCode = "", enrolStep = 0;
-    await t.step("a valid code completes setup as totp", async () => {
-      const enrolledAt = await settledTotpNow();
-      enrolStep = totpStep(enrolledAt);
-      enrolCode = await codeFor(secret, enrolledAt);
-      const res = await fetch(`${server.baseUrl}/_/api/setup`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          mode: "password",
-          username: "Alice",
-          password: "secret",
-          totpKey: key,
-          totpCode: enrolCode,
-        }),
+      server = await boot();
+      assertEquals((await api("setup")).body, { setupRequired: false });
+      const again = await api("token", "POST", {
+        username: "Alice",
+        password: request.password,
       });
-      assertEquals(res.status, 200);
-      assertEquals((await res.json()).setupRequired, false);
-
-      const config = JSON.parse(
-        await Deno.readTextFile(`${server.vault}/.globnotes/config.json`),
-      );
-      assertEquals(config.auth_type, "totp");
-      assertEquals(config.totp_key, key);
-      assertEquals(config.username, "alice");
-      // Hash only — no plaintext password anywhere in the stored config.
-      assert(config.password_hash.startsWith("pbkdf2_sha256$"));
-      assert(!JSON.stringify(config).includes('"secret"'));
-    });
-
-    const login = (password: string) =>
-      fetch(`${server.baseUrl}/_/api/token`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ username: "alice", password }),
+      assertEquals([again.status, again.body.token_type], [200, "bearer"]);
+      const admin = await api("access", "GET", undefined, {
+        authorization: `Bearer ${again.body.access_token}`,
       });
-
-    await t.step(
-      "the enrolment code is spent (primed single-use)",
-      async () => {
-        const res = await login(`secret${enrolCode}`);
-        assertEquals(res.status, 401);
-      },
-    );
-
-    let acceptedNext = "";
-    await t.step("previous and next step codes log in", async () => {
-      // Not the step right after enrolment: its previous step is the spent
-      // enrolment code, which the replay guard (correctly) rejects.
-      const now = await settledTotpNow({ consumedAtStep: enrolStep });
-      for (const epoch of [now - stepMs, now + stepMs]) {
-        const code = await codeFor(secret, epoch);
-        const res = await login(`secret${code}`);
-        assertEquals(res.status, 200);
-        const body = await res.json();
-        assertEquals(body.token_type, "bearer");
-        acceptedNext = code;
-      }
-    });
-
-    await t.step("an accepted code cannot be replayed", async () => {
-      // The last accepted code is the primed/last-used one: within ±1
-      // step it is still window-valid, so the 401 is the replay guard,
-      // not an expiry.
-      const res = await login(`secret${acceptedNext}`);
-      assertEquals(res.status, 401);
-    });
-
-    await t.step(
-      "password alone and far-window codes are rejected",
-      async () => {
-        assertEquals((await login("secret")).status, 401);
-        const far = await codeFor(secret, Date.now() - 10 * stepMs);
-        assertEquals((await login(`secret${far}`)).status, 401);
-      },
-    );
-
-    await t.step("enrolment closes once setup is complete", async () => {
-      const res = await fetch(
-        `${server.baseUrl}/_/api/setup/totp-enrolment`,
-        {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: "{}",
-        },
-      );
-      assertEquals(res.status, 409);
-    });
-  } finally {
-    await server.close();
-  }
-
-  await t.step(
-    "stored key survives restart without credential environment inputs",
-    async () => {
-      const restarted = await bootServer({
-        GLOBNOTES_GLOBNOTES_PATH: server.vault,
-      });
-      try {
-        const res = await fetch(`${restarted.baseUrl}/_/api/config`);
-        assertEquals((await res.json()).authType, "totp");
-        const stored = JSON.parse(
-          await Deno.readTextFile(`${server.vault}/.globnotes/config.json`),
-        );
-        assertEquals(stored.totp_key_encoding, "base32");
-        const code = stored.totp_key;
-        const login = await fetch(`${restarted.baseUrl}/_/api/token`, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            username: "alice",
-            password: `secret${await codeFor(code, Date.now())}`,
-          }),
-        });
-        assertEquals(login.status, 200);
-      } finally {
-        await restarted.close();
-      }
-      await Deno.remove(server.vault, { recursive: true });
-    },
-  );
-});
+      assertEquals([admin.status, admin.body.everybody, admin.body.grants], [
+        200,
+        everybody,
+        { [person.id]: "admin" },
+      ]);
+      assertEquals(await Deno.readTextFile(accountFile), accountBytes);
+    }));
+}

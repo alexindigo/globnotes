@@ -18,30 +18,12 @@ import { heldOperation } from "./helpers/owned_operation.ts";
 import { OwnershipError } from "../shared/ownership.js";
 
 /** Review inventory, never a production policy lookup. */
-const LEGACY_PUBLIC_EXCEPTIONS: Record<string, string> = {
-  "get.ts": "SPA shell",
-  "#...path/get.ts": "mixed shell/static/files; handler binds file authority",
-  "_/login/get.ts": "SPA shell",
-  "_/new/get.ts": "SPA shell",
-  "_/search/get.ts": "SPA shell",
-  "_/conflicts/get.ts": "SPA shell, no conflict data",
-  "_/conflicts/#id/get.ts": "SPA shell, no conflict data",
-  "_/api/health/get.ts": "health",
-  "_/api/token/post.ts": "instance sign-in",
-  "_/api/setup/get.ts": "minimal setup status",
-  "_/api/setup/post.ts": "one-time setup",
-  "_/api/setup/totp-enrolment/post.ts": "fresh setup enrollment",
-  "_/api/config/get.ts": "legacy bridge; prepared session-aware projection",
-  "_/api/index-status/get.ts": "legacy bridge; prepared View required",
-  "_/brand/#...file/get.ts": "pre-login branding assets",
-  "_/mcp/get.ts": "transport Origin and 405",
-  "_/mcp/delete.ts": "transport Origin and 405",
-  "_/mcp/post.ts": "transport per-tool authority",
-};
 const ROUTES: Record<HttpOperation, readonly string[]> = {
   public: [
     "get.ts",
     "_/login/get.ts",
+    "_/account/get.ts",
+    "_/setup/get.ts",
     "_/new/get.ts",
     "_/search/get.ts",
     "_/conflicts/get.ts",
@@ -55,8 +37,16 @@ const ROUTES: Record<HttpOperation, readonly string[]> = {
   ],
   shellOrFile: ["#...path/get.ts"],
   mcp: ["_/mcp/get.ts", "_/mcp/delete.ts", "_/mcp/post.ts"],
-  session: ["_/api/auth-check/get.ts", "_/api/config/get.ts"],
-  manageOwnAccount: [],
+  session: [
+    "_/api/auth-check/get.ts",
+    "_/api/config/get.ts",
+    "_/api/accounts/get.ts",
+  ],
+  manageOwnAccount: [
+    "_/api/account/get.ts",
+    "_/api/account/patch.ts",
+    "_/api/account/totp-enrolment/post.ts",
+  ],
   createVault: [],
   readVault: [
     "_/api/changes/get.ts",
@@ -68,6 +58,7 @@ const ROUTES: Record<HttpOperation, readonly string[]> = {
     "_/api/notes/#...path/get.ts",
     "_/api/plugin-host/events/get.ts",
     "_/api/plugin-host/get.ts",
+    "_/api/plugin-host/#id/settings/#page/get.ts",
     "_/api/plugins/#id/get.ts",
     "_/api/plugins/#id/head.ts",
     "_/api/plugins/#id/options.ts",
@@ -104,7 +95,7 @@ const ROUTES: Record<HttpOperation, readonly string[]> = {
   manageVault: [
     "_/api/access/get.ts",
     "_/api/access/put.ts",
-    "_/api/access/totp-enrolment/post.ts",
+    "_/api/accounts/post.ts",
     "_/api/brand/post.ts",
     "_/api/drivers/get.ts",
     "_/api/drivers/#id/decisions/post.ts",
@@ -118,12 +109,10 @@ const ROUTES: Record<HttpOperation, readonly string[]> = {
     "_/api/plugin-host/#id/permission-requests/#request/decision/post.ts",
     "_/api/plugin-host/#id/permissions/get.ts",
     "_/api/plugin-host/#id/permissions/put.ts",
-    "_/api/plugin-host/#id/settings/#page/get.ts",
     "_/api/plugin-host/#id/settings/#page/put.ts",
     "_/api/plugin-host/permission-requests/get.ts",
     "_/api/plugin-host/policy/put.ts",
     "_/api/plugins/get.ts",
-    "_/api/setup/reset/post.ts",
   ],
 };
 const EXPECTED = Object.fromEntries(
@@ -146,7 +135,7 @@ Deno.test("identity route policy: all discovered endpoints declare operations an
   const root = fromFileUrl(
     new URL("../server/api/endpoints/", import.meta.url),
   );
-  const seen: string[] = [], operations: Record<string, string> = {};
+  const operations: Record<string, string> = {};
   const visit = (directory: string) => {
     for (const entry of Deno.readDirSync(`${root}${directory}`)) {
       const file = `${directory}${entry.name}`;
@@ -154,12 +143,14 @@ Deno.test("identity route policy: all discovered endpoints declare operations an
       else if (file.endsWith(".ts") && file !== "_/00-auth.ts") {
         const source = Deno.readTextFileSync(`${root}${file}`);
         operations[file] = classified(file, source);
-        if (/export const auth = false/.test(source)) seen.push(file);
+        assert(
+          !/export const auth\s*=/.test(source),
+          `Legacy admission flag: ${file}`,
+        );
       }
     }
   };
   visit("");
-  assertEquals(seen.sort(), Object.keys(LEGACY_PUBLIC_EXCEPTIONS).sort());
   assertEquals(operations, EXPECTED);
   assertThrows(
     () => classified("new/get.ts", "export default () => 'unguarded';"),
@@ -282,7 +273,10 @@ Deno.test("identity route policy: real Pathfinder metadata admits before handler
       denials.push([denied.status, await denied.json()]);
     }
     assertEquals(denials, [
-      [403, { detail: "This account cannot perform that operation." }],
+      [403, {
+        detail: "This account cannot perform that operation.",
+        code: "operation_not_permitted",
+      }],
       [403, { detail: "Endpoint access requirement is missing." }],
     ]);
     await heldOperation({

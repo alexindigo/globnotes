@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { nextTick } from "vue";
-import { mount } from "@vue/test-utils";
+import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import { applyBrandToDocument } from "../brand.js";
 import { initDocTitle, setDocTitleBase } from "../title.js";
 import { publish, TOPICS } from "../bus/index.js";
 import { setTheme } from "../themes.js";
+import { createServerViewer } from "../serverViewer.js";
 import { useGlobalStore } from "../globalStore.js";
 import Logo from "../components/Logo.vue";
 
@@ -32,6 +33,49 @@ it("keeps the open note through late and live branding, then resets on navigatio
   expect(document.title).toBe("Current note - Arriving brand");
   publish(TOPICS.BRAND_CHANGE, { ...brand, name: "Changed brand" }); expect(document.title).toBe("Current note - Changed brand");
   setDocTitleBase(); expect(document.title).toBe("Changed brand");
+});
+it("keeps a focused note link when branding is reapplied without a theme change", async () => {
+  const root = document.body.appendChild(document.createElement("div"));
+  const render = vi.fn(async () => '<a href="/renamed">Renamed</a>');
+  const busy = vi.fn();
+  const viewer = createServerViewer({
+    getContext: () => ({ title: "Source", root }),
+    setHtml: html => { root.innerHTML = html; },
+    rendered: () => {}, failed: () => {}, busy, render,
+  });
+  try {
+    await viewer.renderNote();
+    const link = root.querySelector("a");
+    link.focus();
+    const original = { name: "Source vault", accent: null, files: [] };
+    applyBrandToDocument(original);
+    publish(TOPICS.BRAND_CHANGE, { ...original, name: "New vault name" });
+    await flushPromises();
+    expect(root.querySelector("a")).toBe(link);
+    expect(document.activeElement).toBe(link);
+    expect(render).toHaveBeenCalledOnce();
+    expect(busy.mock.calls).toEqual([[true], [false]]);
+
+    // Real palette changes still invalidate the saved viewer for Mermaid.
+    applyBrandToDocument(brand);
+    await flushPromises();
+    expect(render).toHaveBeenCalledTimes(2);
+    applyBrandToDocument({ ...brand, files: ["logo.svg"] });
+    await flushPromises();
+    expect(render).toHaveBeenCalledTimes(2);
+    setTheme("dracula");
+    await flushPromises();
+    expect(render).toHaveBeenCalledTimes(3);
+    applyBrandToDocument({ ...brand, accent: "#654321" });
+    await flushPromises();
+    expect(render).toHaveBeenCalledTimes(3); // Dracula owns its accent.
+    setTheme("globnotes-light");
+    await flushPromises();
+    expect(render).toHaveBeenCalledTimes(4);
+    expect(document.documentElement.style.getPropertyValue("--theme-brand")).toBe("101 67 33");
+  } finally {
+    viewer.dispose();
+  }
 });
 it("restores all original favicon attributes after successive overrides", () => {
   const icon = document.querySelector('link[rel="icon"]'), shortcut = document.querySelector('link[rel="shortcut icon"]'), mask = document.querySelector('link[rel="mask-icon"]');

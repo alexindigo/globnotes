@@ -9,6 +9,8 @@ import {
   type CredentialOptions,
 } from "../../server/auth/account_credentials.ts";
 import { bindCredentialAuthority } from "../../server/auth/internal/account_credentials.ts";
+import { OwnAccount } from "../../server/auth/account.ts";
+import { InstanceAuthority } from "../../server/auth/authority.ts";
 import { StoredConfigConflict } from "../../server/config/file_store.ts";
 import type { TotpEnrollmentBundle } from "../../server/auth/totp_enrolment.ts";
 import { createOperationLease } from "../../server/operation_lease.ts";
@@ -19,6 +21,7 @@ import {
 } from "../../server/auth/sessions.ts";
 import {
   ACCOUNT_A,
+  ACCOUNT_B,
   identityAccount,
   identityFixture,
   UPDATE,
@@ -63,6 +66,8 @@ export interface CommandFixture {
   readonly options: CredentialOptions;
   readonly accounts: AccountRepository;
   readonly sessions: InstanceSessions;
+  readonly ownAccount: OwnAccount;
+  addPeer(): void;
   readonly authority: CredentialAuthority;
   now: number;
   retire(): boolean;
@@ -131,6 +136,19 @@ export async function credentialCommandFixture(
       options: credentialOptions,
       accounts,
       sessions,
+      ownAccount: new OwnAccount(
+        new InstanceAuthority(sessions, () => null, lifetime.lease),
+      ),
+      addPeer() {
+        importFixtureAccount(
+          accounts,
+          identityAccount({
+            id: ACCOUNT_B,
+            login: "bob",
+            passwordHash: fixturePasswordHash("password"),
+          }),
+        );
+      },
       authority: bound(),
       retire: lifetime.retire,
       bound,

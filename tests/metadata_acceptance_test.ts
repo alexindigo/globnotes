@@ -3,6 +3,7 @@ import { assert, assertEquals } from "@std/assert";
 import { storageServerFixture } from "./helpers/driver_fixture.ts";
 import { memoryRemote } from "./helpers/memory_remote.ts";
 import { catalogPluginReady } from "./helpers/plugin_ready.ts";
+import { fixtureAdmin } from "./helpers/fixture_http.ts";
 import { done, pending, waitUntil } from "./helpers/wait.ts";
 import type {
   MetadataPage,
@@ -75,7 +76,9 @@ Deno.test("metadata acceptance: real server Worker get/query/watch follows local
       revision: catalog.policy.revision,
       signature: catalog.policy.signature,
     });
-    await catalogPluginReady(f.server(), id);
+    await catalogPluginReady(f.server(), id, {
+      headers: (await fixtureAdmin(f.server())).headers,
+    });
     await waitRows([]);
     Deno.writeTextFileSync(`${f.vault}/folder.md`, body("folder"));
     ready((await waitRows(["folder.md"])).rows[0], "folder");
@@ -180,7 +183,9 @@ Deno.test("metadata acceptance: real server Worker get/query/watch follows local
     await waitRows(["plugin-renamed.md"]);
     const oldRevision = (await page()).revision;
     await f.restart();
-    await catalogPluginReady(f.server(), id);
+    await catalogPluginReady(f.server(), id, {
+      headers: (await fixtureAdmin(f.server())).headers,
+    });
     result = await waitRows(["plugin-renamed.md"]);
     assert(result.revision !== oldRevision);
     assert(!JSON.stringify(result).includes("changed-folder"));

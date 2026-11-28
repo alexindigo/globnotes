@@ -68,8 +68,14 @@ export function createIdentityNoteIndex({ sessionKey, canRead, read = getNoteInd
     dispose() { disposed = true; setSession(null); return owner.dispose(); } });
 }
 
+let activeIndex;
+export function bindNoteIndex(index) {
+  activeIndex = index;
+  return () => { if (activeIndex === index) activeIndex = null; };
+}
 let refreshTicket = 0;
 export function refreshNoteIndex(attempt = 0) {
+  if (activeIndex) return activeIndex.refresh();
   return readIndex(attempt, ++refreshTicket);
 }
 function readIndex(attempt, ticket) {
@@ -125,10 +131,6 @@ export function resolveNotePath(linkText) {
   return target;
 }
 
-subscribe(TOPICS.NOTE_CREATE, () => refreshNoteIndex());
-subscribe(TOPICS.NOTE_RENAME, () => refreshNoteIndex());
-subscribe(TOPICS.NOTE_DELETE, () => refreshNoteIndex());
-subscribeVaultNotes(() => refreshNoteIndex());
 
 // Track recently opened notes for the quick switcher's empty-query state.
 subscribe(TOPICS.NOTE_OPEN, ({ path }) => {

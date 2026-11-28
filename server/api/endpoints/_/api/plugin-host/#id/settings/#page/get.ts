@@ -1,29 +1,20 @@
 // SPDX-License-Identifier: LGPL-3.0-only
-export const operation = "manageVault";
+export const operation = "readVault";
 import type { PathfinderRequest } from "@pathfinder/pathfinder";
 
-import { HttpError } from "@pathfinder/pathfinder";
+import { deliverAdmissionRefusals } from "@server/auth/admission_refusal.ts";
 import { PluginContractError } from "@server/plugins/contracts.ts";
 import { state } from "@server/state.ts";
 
-/** GET /_/api/plugin-host/<id>/settings/<page> — validated effective values
- * and the current persistence revision. */
-export default async function (request: PathfinderRequest) {
-  const catalog = await state.plugins!.catalog();
-  const plugin = catalog.plugins.find((p) =>
-    p.id === String(request.params.id)
-  );
-  const page = plugin?.pages.find((p) => p.id === String(request.params.page));
-  if (!page) throw new HttpError(404, "Not Found");
+/** Runtime values for enabled browser contributions; full page for Admin. */
+export default deliverAdmissionRefusals(async (request: PathfinderRequest) => {
   try {
-    const owner = state.pluginData!.forPlugin(String(request.params.id));
-    const current = await owner.page(page);
-    return {
-      values: current.values,
-      revision: current.revision,
-      sourceKey: current.sourceKey,
-      fields: current.fields,
-    };
+    return await state.identity!.composition.responses.pluginSettings(
+      request._raw,
+      state.pluginData!,
+      String(request.params.id),
+      String(request.params.page),
+    );
   } catch (e) {
     if (e instanceof PluginContractError) {
       return Response.json(
@@ -33,4 +24,4 @@ export default async function (request: PathfinderRequest) {
     }
     throw e;
   }
-}
+});

@@ -77,13 +77,6 @@ const READINESS_ALLOWED: NonNullable<Rule["allowed"]> = [
       "asserted timing: the 11.5 s window in which interval mode must write its ticks",
   },
   {
-    file: "client/tests/e2e/plugin-prefix-auth.mjs",
-    line:
-      'for (const end = Date.now() + 3500; !expired.state.closed;) { assert(Date.now() < end, "Prefix/auth consumer observation deadline"); await new Promise(resolve => setTimeout(resolve, 25)); }',
-    reason:
-      "ambiguous, kept as is: the 3.5 s bound may be part of the expiry claim (a 2 s signed expiry closes the stream promptly, before any heartbeat)",
-  },
-  {
     file: "client/tests/e2e/settings-pending-native.mjs",
     line: "const deadline = Date.now() + 15000;",
     reason:
@@ -111,59 +104,6 @@ const RAW_CLOCK_ALLOWED: NonNullable<Rule["allowed"]> = [
     file: "server/config/vault_binding.ts",
     line: "createdAt: new Date(Date.now()).toISOString(),",
     reason: "persisted binding creation timestamp, not a liveness budget",
-  },
-  {
-    file: "server/auth/local.ts",
-    line: "const exp = Math.floor(Date.now() / 1000) +",
-    reason: "wall clock by design: a token's expiry is a real-time property",
-  },
-  {
-    file: "server/auth/middleware.ts",
-    line: "(metadata.expiresAt !== null && Date.now() >= metadata.expiresAt)",
-    reason:
-      "wall clock by design: an expired credential stays expired across a stall",
-  },
-  {
-    file: "server/api/endpoints/_/api/plugin-host/events/get.ts",
-    line:
-      "if (current.expiresAt !== null && Date.now() >= current.expiresAt) {",
-    reason: "wall clock by design: credential expiry closes the stream",
-  },
-  {
-    file: "server/api/endpoints/_/api/plugin-host/events/get.ts",
-    line: ": { at: Date.now() },",
-    reason: "a timestamp in the hello frame, not a budget",
-  },
-  {
-    file: "server/api/endpoints/_/api/plugin-host/events/get.ts",
-    line: "const heartbeat = setInterval(",
-    reason: "keepalive cadence the server emits; nothing fails when it is late",
-  },
-  {
-    file: "server/api/endpoints/_/api/plugin-host/events/get.ts",
-    line: "const remaining = admitted.expiresAt - Date.now();",
-    reason: "wall clock by design: the stream closes at credential expiry",
-  },
-  {
-    file: "server/api/endpoints/_/api/plugin-host/events/get.ts",
-    line: "expiryTimer = setTimeout(",
-    reason: "wall clock by design: the stream closes at credential expiry",
-  },
-  {
-    file: "server/api/endpoints/_/api/changes/get.ts",
-    line:
-      "const heartbeat = setInterval(() => emit(), CHANGE_STREAM_HEARTBEAT_MS);",
-    reason: "keepalive cadence the server emits; nothing fails when it is late",
-  },
-  {
-    file: "server/api/endpoints/_/api/changes/get.ts",
-    line: "const remaining = admitted.expiresAt - Date.now();",
-    reason: "wall clock by design: the stream closes at credential expiry",
-  },
-  {
-    file: "server/api/endpoints/_/api/changes/get.ts",
-    line: "else expiry = setTimeout(expire, Math.min(remaining, 2147483647));",
-    reason: "wall clock by design: the stream closes at credential expiry",
   },
   {
     file: "server/auth/identity_sse.ts",

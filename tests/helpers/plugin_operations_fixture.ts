@@ -2,16 +2,13 @@ import { testMetadata, testServices } from "./environment.ts";
 // SPDX-License-Identifier: LGPL-3.0-only
 import { publicScenario } from "./fixture_scenarios.ts";
 import { testEnvironment } from "./environment.ts";
-import { AuthType, GlobalConfig } from "./config.ts";
+import { fixtureLifecycle, GlobalConfig } from "./config.ts";
 import { FileServing } from "../../server/files/file_serving.ts";
 import { FileSystemNotes } from "../../server/notes/file_system.ts";
 import { NoteOperations } from "../../server/notes/operations.ts";
 import { AuxiliaryFilesystem } from "../../server/plugins/auxiliary_fs.ts";
 import { PluginDataStore } from "../../server/plugins/data.ts";
-import {
-  PluginLifecycle,
-  type PluginServiceEligibility,
-} from "../../server/plugins/lifecycle.ts";
+import type { PluginServiceEligibility } from "../../server/plugins/lifecycle.ts";
 import { createPluginManager } from "./plugin_manager.ts";
 import { servicePluginRpc } from "../../server/plugins/rpc.ts";
 import { PluginSettingsEnvironment } from "../../server/plugins/settings_environment.ts";
@@ -135,8 +132,7 @@ async function constructPluginOperationsFixture(
     fixtureScenario: publicScenario(),
   });
   const config = new GlobalConfig(env);
-  config.authType = AuthType.NONE;
-  const lifecycle = new PluginLifecycle(config, options.serviceEligibility),
+  const lifecycle = fixtureLifecycle(config, options.serviceEligibility),
     notes = new FileSystemNotes(fixture.vault, {}, testServices(env).notes),
     fileServing = new FileServing(fixture.vault);
   const hub = (await scope.acquire(

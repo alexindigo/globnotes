@@ -3,7 +3,11 @@
 /** HTTP consumers observe the same host work as in-process fixtures. The existing
  * invalidation stream is a wake-up, never a receipt or a second work deadline. */
 import type { ServiceWorkSummary } from "../../server/plugins/host.ts";
+import { fixtureSignIn } from "./fixture_sign_in.ts";
+import type { IdentityFixturePayload } from "./identity_fixture.ts";
 import { done, failed, pending, waitUntil } from "./wait.ts";
+
+type CatalogLogs = { stdout?: string; stderr?: string };
 
 export interface CatalogPlugin {
   id: string;
@@ -16,9 +20,11 @@ export interface CatalogPlugin {
 }
 export interface CatalogServer {
   baseUrl: string;
+  prefix?: string;
+  fixtureIdentity?: IdentityFixturePayload | null;
   pid?: number;
   status?(): { code: number; signal?: string | null } | null;
-  logs?(): { stdout?: string; stderr?: string };
+  logs?: CatalogLogs | (() => CatalogLogs);
   exited?: Promise<{ code: number }>;
 }
 export interface CatalogOptions {
@@ -26,6 +32,42 @@ export interface CatalogOptions {
   headers?: HeadersInit;
   signal?: AbortSignal;
 }
+
+/** Sign in independently of the browser actor. Don't spend a temporary
+ * password or an authenticator code belonging to a case under test. */
+export async function nativeFixtureAdmin(
+  server: Pick<CatalogServer, "baseUrl" | "prefix" | "fixtureIdentity">,
+  { prefix = server.prefix ?? "", signal }: Pick<
+    CatalogOptions,
+    "prefix" | "signal"
+  > = {},
+) {
+  const identity = server.fixtureIdentity;
+  const admin = identity?.people.find((person) =>
+    identity.grants[person.login] === "admin" && !person.totpKey &&
+    !person.temporary
+  );
+  if (!admin) {
+    throw Error("Fixture has no password-only Admin for test setup/readiness");
+  }
+  const token = await fixtureSignIn(server.baseUrl, admin, prefix, signal);
+  return { token, headers: { authorization: `Bearer ${token}` } };
+}
+
+export async function catalogRequestHeaders(
+  server: CatalogServer,
+  options: CatalogOptions = {},
+) {
+  const headers = new Headers(options.headers);
+  // Bare observer ports are also used by protocol controls. An account fixture
+  // instead always observes the Admin projection, never a browser credential.
+  if (server.fixtureIdentity !== undefined) {
+    const admin = await nativeFixtureAdmin(server, options);
+    headers.set("authorization", admin.headers.authorization);
+  }
+  return headers;
+}
+
 type Lane = "ordinary" | "versioning" | "guard";
 const lanes: readonly Lane[] = ["ordinary", "versioning", "guard"];
 export interface WorkFence {
@@ -131,12 +173,16 @@ export async function observeCatalog(
     abort.abort(error);
     wake();
   });
-  const url = `${server.baseUrl}${options.prefix ?? ""}/_/api/plugin-host`;
+  const signal = options.signal
+    ? AbortSignal.any([abort.signal, options.signal])
+    : abort.signal;
+  const headers = await catalogRequestHeaders(server, { ...options, signal });
+  const url = `${server.baseUrl}${
+    options.prefix ?? server.prefix ?? ""
+  }/_/api/plugin-host`;
   const response = await fetch(`${url}/events`, {
-    headers: options.headers,
-    signal: options.signal
-      ? AbortSignal.any([abort.signal, options.signal])
-      : abort.signal,
+    headers,
+    signal,
   });
   if (!response.ok || !response.body) {
     await response.body?.cancel();
@@ -175,7 +221,7 @@ export async function observeCatalog(
       if (failure) throw failure;
       if (server.status?.()) throw Error("catalog server exited");
       const response = await fetch(url, {
-        headers: options.headers,
+        headers,
         signal: AbortSignal.any([
           abort.signal,
           ...options.signal ? [options.signal] : [],
@@ -229,8 +275,13 @@ export async function catalogPluginReady(
   options: CatalogOptions & { allowFailed?: boolean; label?: string } = {},
 ): Promise<CatalogPlugin> {
   let observer: Awaited<ReturnType<typeof observeCatalog>> | undefined;
+  const logs = server.logs;
   const children = server.pid && server.status
-    ? [{ pid: server.pid, status: server.status, logs: server.logs }]
+    ? [{
+      pid: server.pid,
+      status: server.status,
+      logs: typeof logs === "function" ? logs : () => logs ?? {},
+    }]
     : [];
   try {
     const read = async (signal?: AbortSignal) =>

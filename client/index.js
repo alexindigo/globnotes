@@ -5,7 +5,6 @@ import { createApp } from "vue";
 import { createPinia } from "pinia";
 import { initTheme } from "./themes.js";
 import { initDocTitle } from "./title.js";
-import { loadStoredToken } from "./tokenStorage.js";
 import { readPathPrefix } from "./pathPrefix.js";
 import router from "/router.js";
 
@@ -35,11 +34,9 @@ app.use(ToastService);
 
 // Custom v-focus directive to focus on an element when mounted
 app.directive("focus", {
-  mounted(el) {
-    el.focus();
+  mounted(el, binding) {
+    if (binding.value !== false) el.focus();
   },
 });
-
-loadStoredToken();
 
 app.mount("#app");

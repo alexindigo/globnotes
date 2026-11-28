@@ -4,8 +4,7 @@ import { getDrivers } from "./api.js";
 import { subscribe, TOPICS } from "./bus/index.js";
 import { acquireVaultChanges } from "./vaultChanges.js";
 import { connectionLifetime } from "./connectionLifetime.js";
-import { getStoredToken } from "./tokenStorage.js";
-import { permissionEligibility, permissionSessionKey } from "./appSessionPolicy.js";
+import { permissionEligibility, identitySessionKey } from "./appSessionPolicy.js";
 import { driverStates, driverReason } from "./driverPresentation.js";
 import { createConflictReadRetry } from "./conflictReadRetry.js";
 
@@ -18,8 +17,7 @@ export const SYNC_ACTIVITY_MIN_MS = 1000;
  * Hidden documents release all scheduled work. */
 export function createSyncStatus({ read = getDrivers, subscribe:on = subscribe,
   acquireChanges = acquireVaultChanges, lifetime = connectionLifetime,
-  now = () => Date.now(), setTimer = setTimeout, clearTimer = clearTimeout,
-  token = getStoredToken } = {}) {
+  now = () => Date.now(), setTimer = setTimeout, clearTimer = clearTimeout } = {}) {
   const data = reactive({ instances:[], visible:false, icon:"tabCloud",tone:"idle",label:"Sync",error:"" });
   let active = false, visible = false, disposed = false, identity = null;
   let generation = 0, flight = null, dirty = false, releases = [], timer = null, warningTimer = null, stopContext;
@@ -101,7 +99,7 @@ export function createSyncStatus({ read = getDrivers, subscribe:on = subscribe,
   }
   function bindContext({config,configReady,routeName}) {
     stopContext?.();
-    stopContext = watch(() => [!!routeName() && permissionEligibility(configReady(),config(),routeName(),token()),permissionSessionKey(config(),token())],
+    stopContext = watch(() => [!!routeName() && permissionEligibility(configReady(),config(),routeName()),identitySessionKey(config())],
       ([active,key]) => setContext({active,key}),{immediate:true,flush:"sync"});
   }
   return { state:readonly(reactive(Object.fromEntries(Object.keys(data).map(key => [key,computed(() => data[key])])))),

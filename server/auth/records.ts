@@ -16,6 +16,8 @@ export class IdentityStateError extends Error {
     super("Invalid identity state; original bytes retained.");
   }
 }
+/** Unaccepted credential input, not a persistence/recovery failure. */
+export class CredentialInputError extends IdentityStateError {}
 export const record = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === "object" && !Array.isArray(value);
 export const integer = (value: unknown): value is number =>

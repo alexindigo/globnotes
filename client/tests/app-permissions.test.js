@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { nextTick, reactive, ref } from "vue";
 import { flushPromises } from "@vue/test-utils";
+import { accountProjection } from "./helpers/account-projection.js";
+import { identitySessionKey } from "../appSessionPolicy.js";
 import { createAppPermissions, permissionRequestKey } from "../appPermissions.js";
 import * as api from "../api.js";
 import { createAttentionRegistry } from '../attention.js';
@@ -20,7 +22,7 @@ const deferred = () => {
 const host = { type: "host", authority: "example.test:443" }, all = { type: "all" };
 const request = (id = "request-A") => ({ pluginId: "p", id, state: "pending", kind: "network", scopes: [host], source: { key: "source-A", revision: 1 } });
 function fixture(options = {}) {
-  const inputs = reactive({ config: { authType: "none", setupRequired: false }, ready: false, route: "note", setup: false, token: null });
+  const inputs = reactive({ config: accountProjection(), ready: false, route: "note", setup: false });
   const catalog = ref(null), modals = ref([]), next = ref(null), pendingRequests = ref([]);
   const record = reactive({ available: true, hasServer: true, busy: false, view: { pendingRequests: [] } });
   const choices = reactive({ scopes: [host], allowNetwork: false });
@@ -33,7 +35,7 @@ function fixture(options = {}) {
   };
   const createPermissions = vi.fn(() => permissions), refreshConfig = vi.fn(), startRuntime = vi.fn(), stopRuntime = vi.fn();
   const owner = createAppPermissions({ config: () => inputs.config, configReady: () => inputs.ready,
-    routeName: () => inputs.route, setupRequested: () => inputs.setup, token: () => inputs.token,
+    routeName: () => inputs.route, setupRequested: () => inputs.setup,
     catalog, modals, createPermissions, refreshConfig, startRuntime, stopRuntime, ...options });
   owners.push(owner);
   // Production admits the session before a pending-request read can publish.
@@ -61,11 +63,11 @@ describe("App permission owner", () => {
   });
   it('r2 B7 retracts publication synchronously across a login handoff even before another pending read', async () => {
     const attentionRegistry=createAttentionRegistry(),f=fixture({attentionRegistry});
-    f.inputs.config.authType='password';f.inputs.token='old-user';f.publish();await flushPromises();
+    f.publish();await flushPromises();
     expect(attentionRegistry.items.value).toHaveLength(1);
     // The controller clears admitted requests on a session change; the App owner must call it.
     f.permissions.setSession.mockImplementation(()=>{f.pendingRequests.value=[];});
-    f.inputs.token='next-user';await nextTick();
+    f.inputs.config = accountProjection({login:"bob"});await nextTick();
     expect(attentionRegistry.items.value).toEqual([]);
   });
   it('r2 B7 disposes its published items', async () => {
@@ -113,25 +115,49 @@ describe("App permission owner", () => {
     const f = fixture();
     expect(f.createPermissions).toHaveBeenCalledWith(expect.objectContaining({ readView: api.getPluginPermissions,
       writeView: api.putPluginPermissions, readPending: api.getPluginPermissionRequests, decideRequest: api.decidePluginPermissionRequest }));
-    expect(f.permissions.setSession).toHaveBeenCalledWith("none:anonymous", { active: false, canWrite: false });
+    expect(f.permissions.setSession).toHaveBeenCalledWith(identitySessionKey(f.inputs.config), { active: false, canWrite: false });
     expect(f.startRuntime).not.toHaveBeenCalled(); expect(f.stopRuntime).not.toHaveBeenCalled();
   });
   it("reconciles eligible sessions/catalogs and starts/stops the matching runtime namespace", async () => {
     const f = fixture(); f.inputs.ready = true; await nextTick();
-    expect(f.permissions.setSession).toHaveBeenLastCalledWith("none:anonymous", { active: true, canWrite: true });
-    expect(f.startRuntime).toHaveBeenLastCalledWith("none:anonymous");
+    expect(f.permissions.setSession).toHaveBeenLastCalledWith(identitySessionKey(f.inputs.config), { active: true, canWrite: true });
+    expect(f.startRuntime).toHaveBeenLastCalledWith(identitySessionKey(f.inputs.config));
     f.catalog.value = { plugins: [{ id: "p" }] }; await nextTick();
     expect(f.permissions.reconcile).toHaveBeenLastCalledWith(f.catalog.value); expect(f.refreshConfig).toHaveBeenCalledOnce();
-    f.inputs.config.authType = "password"; f.inputs.token = "token"; await nextTick();
-    expect(f.startRuntime).toHaveBeenLastCalledWith("password:token");
+    f.inputs.config = accountProjection({login:"bob"}); await nextTick();
+    expect(f.startRuntime).toHaveBeenLastCalledWith('[["account","bob"],"1:1:2000000000","fixture","1:1"]');
     f.inputs.route = "login"; await nextTick();
-    expect(f.permissions.setSession).toHaveBeenLastCalledWith("password:token", { active: false, canWrite: false });
+    expect(f.permissions.setSession).toHaveBeenLastCalledWith('[["account","bob"],"1:1:2000000000","fixture","1:1"]', { active: false, canWrite: false });
     expect(f.stopRuntime).toHaveBeenCalledOnce();
   });
   it("keeps inactive catalog reconciliation separate from configuration readiness", async () => {
     const f = fixture(); f.catalog.value = { plugins: [] }; await nextTick();
     expect(f.permissions.reconcile).toHaveBeenCalledOnce(); expect(f.permissions.refreshPending).not.toHaveBeenCalled();
     expect(f.refreshConfig).not.toHaveBeenCalled();
+  });
+  it("does not admit a permission prompt before the initial route resolves", async () => {
+    const f = fixture();
+    const value = { ...request(), scopes: [all] };
+    f.inputs.route = undefined;
+    f.inputs.ready = true;
+    await nextTick();
+    f.catalog.value = { plugins: [{ id: "p" }] };
+    f.publish(value);
+    await flushPromises();
+    expect([f.owner.state.permissionsEligible, f.owner.state.activePermissionRequest]).toEqual([false, null]);
+    expect(f.permissions.refreshPending).not.toHaveBeenCalled();
+    expect(f.permissions.load).not.toHaveBeenCalled();
+
+    // The same account and broad request become usable once the real route commits.
+    f.next.value = null;
+    f.inputs.route = "note";
+    await nextTick();
+    f.next.value = value;
+    await flushPromises();
+    expect(f.permissions.refreshPending).toHaveBeenCalledOnce();
+    expect(f.permissions.load).toHaveBeenCalledExactlyOnceWith("p");
+    expect(f.owner.state.requestPresentation?.broad).toBe(true);
+    expect(f.owner.state.activePermissionRequest?.id).toBe(value.id);
   });
   it.each(["setup", "modal"])("postpones automatic reads behind %s without deferring consent", async blocker => {
     const f = fixture();
@@ -171,7 +197,7 @@ describe("App permission owner", () => {
     if (change === "setup") f.inputs.setup = true;
     if (change === "modal") f.modals.value = [{ name: "confirmation" }];
     if (change === "route") f.inputs.route = "login";
-    if (change === "session") { f.inputs.config.authType = "password"; f.inputs.token = null; }
+    if (change === "session") { f.inputs.config = accountProjection({guest:true,level:"none"}); }
     if (change === "request") f.next.value = null;
     if (change === "dispose") { f.owner.dispose(); owners.pop(); }
     await nextTick(); read.resolve({ status: "accepted", current: () => true }); await flushPromises();

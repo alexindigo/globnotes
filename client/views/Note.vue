@@ -289,17 +289,20 @@ import { useGlobalStore } from "../globalStore.js";
 import { currentLayerId } from "../keybindings/store.js";
 import { clientPluginEpoch } from "../pluginLoader.js";
 import { folderSearchTarget } from "../notePath.js";
-import { createNoteController } from "../noteController.js";
+import { createIdentityNoteController } from "../noteController.js";
+import { IDENTITY_APPLICATION } from "../identityApplication.js";
 import { CONFLICT_INBOX } from "../conflictInbox.js";
 
 const props = defineProps({ path: String });
 const route = useRoute();
 const router = useRouter();
 const globalStore = useGlobalStore();
-const controller = createNoteController({
+const app = inject(IDENTITY_APPLICATION);
+const controller = createIdentityNoteController({
+  session: app.session,
   router, toast: useToast(), conflictInbox: inject(CONFLICT_INBOX, null),
   getContext: () => ({ path: props.path, query: route.query,
-    authType: globalStore.config.authType, notePaths: globalStore.notePaths }),
+    capabilities: globalStore.config.capabilities, notePaths: globalStore.notePaths }),
 });
 const {
   canModify, editorReadOnly, isNewNote, editMode, isNoteNotFound, note, folderDatalistOptions,

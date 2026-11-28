@@ -5,7 +5,9 @@ import { createPinia, setActivePinia } from "pinia";
 import { createMemoryHistory, createRouter } from "vue-router";
 import { getIndexStatus, getNotes, getToken } from "../api.js";
 import { refreshNoteIndex } from "../noteIndex.js";
-import { storeToken } from "../tokenStorage.js";
+import { createIdentityTokenStorage } from "../tokenStorage.js";
+import { createIdentityApplication, IDENTITY_APPLICATION } from "../identityApplication.js";
+import { accountProjection, identityFixtureIO } from "./helpers/account-projection.js";
 import { useGlobalStore } from "../globalStore.js";
 import Home from "../views/Home.vue";
 import LogIn from "../views/LogIn.vue";
@@ -13,19 +15,20 @@ import NavBar from "../partials/NavBar.vue";
 import SyncBanner from "../components/SyncBanner.vue";
 
 const { toast } = vi.hoisted(() => ({ toast: { add: vi.fn() } }));
-vi.mock("../api.js", () => ({
+vi.mock("../api.js", async importOriginal => ({
+  ...await importOriginal(),
   getNotes: vi.fn(), getTags: vi.fn().mockResolvedValue([]), getToken: vi.fn(),
   getIndexStatus: vi.fn(), apiErrorHandler: vi.fn(),
 }));
-vi.mock("../noteIndex.js", () => ({ refreshNoteIndex: vi.fn() }));
-vi.mock("../tokenStorage.js", () => ({ storeToken: vi.fn() }));
+vi.mock("../noteIndex.js", async importOriginal => ({ ...await importOriginal(), refreshNoteIndex: vi.fn() }));
 vi.mock("primevue/usetoast", () => ({ useToast: () => toast }));
 
 const wrappers = [];
+const apps = [];
 async function setup(Component, { path = "/", props } = {}) {
   const pinia = createPinia(); setActivePinia(pinia);
   const store = useGlobalStore();
-  store.config = { authType: "password", quickAccessLimit: 1, quickAccessSort: "lastModified", quickAccessTerm: "#inbox", quickAccessTitle: "Inbox" };
+  store.config = { ...accountProjection(), quickAccessLimit: 1, quickAccessSort: "lastModified", quickAccessTerm: "#inbox", quickAccessTitle: "Inbox" };
   const router = createRouter({ history: createMemoryHistory(), routes: [
     { path: "/", name: "home", component: { template: "<div/>" } },
     { path: "/_/search", name: "search", component: { template: "<div/>" } },
@@ -33,14 +36,31 @@ async function setup(Component, { path = "/", props } = {}) {
     { path: "/:path(.*)", name: "note", component: { template: "<div/>" } },
   ] });
   await router.push(path); await router.isReady();
-  const wrapper = mount(Component, { props, global: { plugins: [pinia, router] } });
+  const provide = {};
+  let tokens;
+  if (Component === LogIn) {
+    store.config = accountProjection({ guest: true, level: "view" });
+    tokens = createIdentityTokenStorage({ setCookie() {} });
+    const app = createIdentityApplication({ config: () => store.config, setConfig: value => { store.config = value; },
+      tokens, toast, store, navigate: target => router.push(target), applyBrand() {},
+      transport: identityFixtureIO({ getToken, getConfig: async () => accountProjection(),
+        getPluginHostCatalog: async () => ({ plugins: [] }), getNoteIndex: async () => [] }),
+    });
+    provide[IDENTITY_APPLICATION] = app;
+    apps.push(app);
+  }
+  const wrapper = mount(Component, { props, global: { plugins: [pinia, router], provide } });
   wrappers.push(wrapper); await flushPromises();
-  return { wrapper, router, store };
+  return { wrapper, router, store, tokens };
 }
 
 describe("I14 view wiring", () => {
-  beforeEach(() => { vi.clearAllMocks(); getNotes.mockResolvedValue([]); });
-  afterEach(() => { wrappers.splice(0).forEach(w => w.unmount()); vi.useRealTimers(); });
+  beforeEach(() => { vi.clearAllMocks(); getToken.mockReset(); getNotes.mockResolvedValue([]); });
+  afterEach(async () => {
+    wrappers.splice(0).forEach(w => w.unmount());
+    for (const app of apps.splice(0)) (await app.dispose()).throwIfFailed();
+    localStorage.clear(); sessionStorage.clear(); vi.useRealTimers();
+  });
 
   it("renders quick-access rows, truncates the extra row and routes Show more", async () => {
     getNotes.mockResolvedValueOnce([{ path: "One" }, { path: "Two" }]);
@@ -60,29 +80,38 @@ describe("I14 view wiring", () => {
 
   it("submits the actual login form, persists Remember Me and follows redirect", async () => {
     getToken.mockResolvedValueOnce("access");
-    const { wrapper, router } = await setup(LogIn, { props: { redirect: "/folder/note" } });
-    await wrapper.get("#username").setValue("alice");
-    await wrapper.get("#password").setValue("secret");
-    await wrapper.get("#remember-me").setValue(true);
+    const { wrapper, router, tokens } = await setup(LogIn, { props: { redirect: "/folder/note" } });
+    expect(wrapper.findAll("form button").map(button => [button.attributes("type"), button.attributes("aria-label") ?? button.text()])).toEqual([
+      ["button", "Show password"], ["submit", "Continue"],
+    ]);
+    expect(wrapper.get("#identity-login-password").attributes("type")).toBe("password");
+    await wrapper.get("#identity-login-name").setValue("alice");
+    await wrapper.get("#identity-login-password").setValue("secret");
+    await wrapper.get('input[type="checkbox"]').setValue(true);
     await wrapper.get("form").trigger("submit"); await flushPromises();
     expect(getToken).toHaveBeenCalledExactlyOnceWith("alice", "secret", "");
-    expect(storeToken).toHaveBeenCalledExactlyOnceWith("access", true);
+    expect([tokens.getStoredToken(), localStorage.getItem(tokens.scope.key)]).toEqual(["access", "access"]);
     expect(router.currentRoute.value.path).toBe("/folder/note");
   });
 
-  it("clears all rendered credential inputs on failed TOTP login while retaining Remember Me", async () => {
-    getToken.mockRejectedValueOnce({ response: { status: 401 } });
-    const { wrapper, store } = await setup(LogIn);
-    store.config.authType = "totp"; await flushPromises();
-    await wrapper.get("#username").setValue("alice");
-    await wrapper.get("#password").setValue("secret");
-    await wrapper.get("#one-time-code").setValue("123456");
-    await wrapper.get("#remember-me").setValue(true);
+  it("clears a failed authenticator code and erases the password on Use another account, retaining Remember Me", async () => {
+    getToken.mockRejectedValueOnce({ response: { status: 401, data: { code: "authenticator_required" } } })
+      .mockRejectedValueOnce({ response: { status: 401 } });
+    const { wrapper, tokens } = await setup(LogIn);
+    await wrapper.get("#identity-login-name").setValue("alice");
+    await wrapper.get("#identity-login-password").setValue("secret");
+    await wrapper.get('input[type="checkbox"]').setValue(true);
     await wrapper.get("form").trigger("submit"); await flushPromises();
-    expect(getToken).toHaveBeenCalledWith("alice", "secret", "123456");
-    for (const id of ["username", "password", "one-time-code"]) expect(wrapper.get(`#${id}`).element.value).toBe("");
-    expect(wrapper.get("#remember-me").element.checked).toBe(true);
+    expect(wrapper.find("#identity-login-password").exists()).toBe(false);
+    await wrapper.get("#identity-login-code").setValue("123456");
+    await wrapper.get("form").trigger("submit"); await flushPromises();
+    expect(getToken.mock.calls).toEqual([["alice", "secret", ""], ["alice", "secret", "123456"]]);
+    expect(wrapper.get("#identity-login-code").element.value).toBe("");
+    expect(tokens.getStoredToken()).toBeNull();
     expect(toast.add).toHaveBeenCalledWith(expect.objectContaining({ summary: "Login Failed" }));
+    await wrapper.get('button[type="button"]').trigger("click");
+    for (const id of ["identity-login-name", "identity-login-password"]) expect(wrapper.get(`#${id}`).element.value).toBe("");
+    expect(wrapper.get('input[type="checkbox"]').element.checked).toBe(true);
   });
 
   it.each([
@@ -91,7 +120,7 @@ describe("I14 view wiring", () => {
   ])("keeps NavBar creation in context %s and reacts to read-only permission", async (path, target) => {
     const { wrapper, store } = await setup(NavBar, { path });
     expect(wrapper.get('[title="New note"]').element.closest("a").getAttribute("href")).toBe(target);
-    store.config.authType = "read_only"; await flushPromises();
+    store.config = accountProjection({ level: "view" }); await flushPromises();
     expect(wrapper.find('[title="New note"]').exists()).toBe(false);
   });
 

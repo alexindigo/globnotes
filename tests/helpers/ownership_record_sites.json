@@ -104,14 +104,6 @@
     "family": "legacy-record-import"
   },
   {
-    "file": "tests/helpers/boot.ts",
-    "capability": "module:tests/helpers/process_records.ts",
-    "line": 22,
-    "source": "\"./process_records.ts\"",
-    "context": "import { publishRecord } from \"./process_records.ts\";",
-    "family": "legacy-record-import"
-  },
-  {
     "file": "client/tests/e2e/sync-status-native.mjs",
     "capability": "Deno.readTextFile",
     "line": 18,

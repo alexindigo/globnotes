@@ -7,7 +7,10 @@ import { HttpError, type PathfinderRequest } from "@pathfinder/pathfinder";
 import { renderResponse } from "@server/render/response.ts";
 import { state } from "@server/state.ts";
 import type { ViewerAuthority } from "@server/auth/authority.ts";
-import type { createInstanceAuth } from "@server/auth/middleware.ts";
+import {
+  activeAuth,
+  type createInstanceAuth,
+} from "@server/auth/middleware.ts";
 import { createHttpPolicy } from "@server/auth/http_policy.ts";
 
 export function createIdentityNoteRender(
@@ -22,7 +25,7 @@ export function createIdentityNoteRender(
 }
 
 export default function (request: PathfinderRequest<{ path: string }>) {
-  return renderNote(request);
+  return createIdentityNoteRender(activeAuth())(request);
 }
 
 /** Render a note's markdown through the plugin pipeline (markdown-it +
@@ -30,7 +33,7 @@ export default function (request: PathfinderRequest<{ path: string }>) {
  * fragments land as a follow-up without changing this contract. */
 async function renderNote(
   request: PathfinderRequest<{ path: string }>,
-  viewer?: ViewerAuthority,
+  viewer: ViewerAuthority,
 ): Promise<Response> {
   let content: string;
   try {

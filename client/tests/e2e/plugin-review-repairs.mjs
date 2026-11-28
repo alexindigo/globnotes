@@ -3,12 +3,12 @@
 // never replace a controller, a response, the registry or its ownership logic.
 import { nativeSession } from "./native-cdp-session.mjs";
 import { bindAddress, httpOrigin } from "./http-origin.mjs";
-import { bootServer, captureNativeDiagnostics } from "./harness-helpers.mjs";
+import { nativeFixtureAdmin, bootServer, captureNativeDiagnostics } from "./harness-helpers.mjs";
 import { REVIEW_REPAIR_CASES, parseReviewRepairArguments } from "./review-repair-cases.mjs";
 import { done, pending, waitUntil } from "../../../tests/helpers/wait.ts";
 import { nativeAccountScenario, nativeFixtureInput } from "./config-fixture.mjs";
 import { settleSettingsInventory } from "./settings-inventory-native.mjs";
-import { createNativeTotpClock } from "./native-totp-fixture.mjs";
+import { commitNativeAccess, signInNative, openNativeSettings, selectAccessLevel, tokenExpression } from "./settings-access-native.mjs";
 import { fixtureScope } from "../../../tests/helpers/fixture_scope.ts";
 import { createFixtureScope } from "../../../tests/helpers/fixture_scope_engine.ts";
 import { prepareRepairFixture, repairRequestHandler } from "./repair-fixture-lifetime.mjs";
@@ -35,11 +35,7 @@ function until(predicate, detail) {
 async function sessionAt(base) {
   const session = (await current.scope.acquire(() => nativeSession({ port: cdpPort }), session => session.close())).value; current.sessions.push(session);
   await session.goto(`${base}/Seed`);
-  if (current.protectedAccount) {
-    await session.poll("!!document.querySelector('#username')");
-    await fill(session, "#username", username); await fill(session, "#password", password);
-    await session.button("Log In");
-  }
+  await signInNative(session, { baseUrl: base }, { login: username, password }, { returnPath: "/Seed" });
   await session.poll("!!document.querySelector('.toast-viewer')");
   return session;
 }
@@ -61,10 +57,10 @@ async function settings(session, page = "core:plugins") {
   await session.click(`[data-settings-nav-id="${page}"]`);
   await session.poll("!!document.querySelector('#settings-modal-title')");
 }
- async function access(session) { await settings(session, "core:access"); await session.button("Change access\u2026"); await session.poll("!!document.querySelector('#setup-title') && document.querySelector('#setup-mode-password')?.disabled===false"); }
+const access = session => openNativeSettings(session, "core:access");
 async function closeSettings(session) { await session.click('[aria-label="Close settings"]'); await session.poll("!document.querySelector('#settings-modal-title')"); }
 async function api(path, method = "GET", body, session) {
-  const token = session ? await session.evaluate("sessionStorage.getItem('token')||localStorage.getItem('token')") : null;
+  const token = session ? await session.evaluate(tokenExpression()) : current.admin.token;
   const response = await fetch(`${current.server.baseUrl}/_/api/${path}`, { method, headers: { ...(token ? { authorization: `Bearer ${token}` } : {}), ...(body === undefined ? {} : { "content-type": "application/json" }) },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.timeout(10000) });
   const text = await response.text(); return { status: response.status, body: text ? JSON.parse(text) : null };
@@ -98,15 +94,18 @@ async function fixture(label, { protectedAccount = false, browser = false } = {}
   const directory = `${artifacts}/${label}`, vault = `${directory}/vault`, state = `${directory}/state/globnotes`, pluginDir = `${state}/plugins/review`;
   await Deno.mkdir(vault, { recursive: true }); await Deno.mkdir(pluginDir, { recursive: true });
   await Deno.writeTextFile(`${vault}/Seed.md`, "Review seed.\n");
-   const scenario = nativeAccountScenario(protectedAccount ? { account: { login: username, password } } : {});
-   const { fixtureScenario } = await nativeFixtureInput(scenario, protectedAccount ? { unrelated_fixture: { retained: true } } : {});
-   const config = fixtureScenario.legacyAuth;
+   const scenario = nativeAccountScenario({ account: { login: username, password }, everybody: protectedAccount ? "none" : "edit" });
+   if (label === "access-conflict") {
+     scenario.identity.people.push({ login: "review-target", password: "review-target-fixture-password" });
+     scenario.identity.grants["review-target"] = "view";
+   }
+   const { fixtureScenario } = await nativeFixtureInput(scenario);
   const descriptor = key => ({ id: "preferences", label: "Repair preferences", renderer: { kind: "declarative-v1", version: 1 }, fields: [{ key, label: key.toUpperCase(), type: "text", default: `${key}-default` }] });
   const manifest = { id: "review", name: "Review fixture", runtime: { server: "service.js", ...(browser ? { client: "browser.js" } : {}) }, capabilities: { network: false, imports: false, read: [], write: [] }, settings: [descriptor("message")] };
   await Deno.writeTextFile(`${pluginDir}/manifest.json`, JSON.stringify(manifest));
   await Deno.writeTextFile(`${pluginDir}/service.js`, `const owner=crypto.randomUUID();export function activate(ctx){ctx.commands.register({id:'inspect',label:'Inspect repair fixture',target:'server'},()=>({owner}));ctx.commands.register({id:'request',label:'Request repair scope',target:'server'},async()=>{const view=await ctx.permissions.status();return ctx.permissions.requestAccess({kind:'network',hosts:['127.0.0.1:9'],reason:'Repair prompt fixture'},{source:view.source});});}`);
   await Deno.writeTextFile(`${state}/plugins.json`, JSON.stringify({ enabled: ["review"], autoEnable: false }));
-  current = { label, directory, vault, state, pluginDir, manifest, descriptor, config, protectedAccount, sessions: [], gates: [], browserHolds: [], requests: [], scope, close: () => lifetime.close(), closed: false };
+  current = { label, directory, vault, state, pluginDir, manifest, descriptor, protectedAccount, sessions: [], gates: [], browserHolds: [], requests: [], scope, close: () => lifetime.close(), closed: false };
    owner = current;
   scope.onCancel(() => {
     for (const gate of owner.gates) { gate.released = true; gate.release.resolve(); }
@@ -114,16 +113,8 @@ async function fixture(label, { protectedAccount = false, browser = false } = {}
   });
   fixtures.push(current);
   if (browser) await browserCode("seed");
-  // A real login token is acquired by the browser; boot readiness can use a
-  // fixture-local signed token, solely to observe the normal protected parent.
-  let headers = {};
-  if (protectedAccount) {
-    const { SignJWT } = await import("jose");
-    const token = await new SignJWT({ sub: username }).setProtectedHeader({ alg: "HS256" }).setExpirationTime("1h").sign(new TextEncoder().encode(config.secret_key));
-    headers = { authorization: `Bearer ${token}` };
-  }
-   if (label === "access-conflict") current.totpClock = (await scope.acquire(() => createNativeTotpClock(directory), clock => clock.close())).value;
-   current.server = (await scope.acquire(() => bootServer(vault, state, { fixtureScenario, logsDir: directory, headers, denoArgs: current.totpClock?.denoArgs }), server => server.close())).value;
+  current.server = (await scope.acquire(() => bootServer(vault, state, { fixtureScenario, logsDir: directory }), server => server.close())).value;
+  current.admin = await nativeFixtureAdmin(current.server);
     current.proxy = (await scope.acquire(() => Deno.serve({ hostname: bindAddress(), port: 0, onListen() {} }, repairRequestHandler(scope, async (request, signal) => {
     const url = new URL(request.url);
     if (url.pathname === "/fixture/browser-A") {
@@ -208,17 +199,17 @@ try {
   if (selected("inventory-handoff")) {
   await fixture("inventory-handoff", { protectedAccount: true });
   await settings(current.session);
-  const token = await current.session.evaluate("sessionStorage.getItem('token')"), gate = gateResponse("PUT", "/_/api/plugin-host/review/enabled");
+  const token = await current.session.evaluate("sessionStorage.getItem('globnotes:session:root')"), gate = gateResponse("PUT", "/_/api/plugin-host/review/enabled");
   await current.session.click(enabledSwitch); await until(() => gate.response, "Inventory PUT not reached");
   assert(gate.response.status === 200 && !(await catalog(current.session)).plugins.find(plugin => plugin.id === "review").enabled, "Held inventory PUT did not persist upstream");
   await current.session.click('[aria-label="Close settings"]');
   await current.session.poll("document.querySelector('[data-inventory-recovery]')?.textContent.includes('unknown')");
   await current.session.button("Access", '[aria-label="Settings pages"]'); await delay(5200);
   await current.session.button("Account", '[aria-label="Settings pages"]'); await delay(5200);
-  assert(await current.session.evaluate(`!!document.querySelector('[data-plugin-inventory]') && !document.querySelector('#setup-title') && sessionStorage.getItem('token')===${JSON.stringify(token)}`), "Unresolved policy admitted a page/session handoff");
+  assert(await current.session.evaluate(`!!document.querySelector('[data-plugin-inventory]') && !document.querySelector('#identity-setup-title') && sessionStorage.getItem('globnotes:session:root')===${JSON.stringify(token)}`), "Unresolved policy admitted a page/session handoff");
   await capture("inventory-unknown-retained"); await release(gate);
   await settleSettingsInventory(current.session, `document.querySelector('${enabledSwitch}')?.getAttribute('aria-checked')==='false'`);
-  assert(await current.session.evaluate(`!!document.querySelector('[data-plugin-inventory]') && sessionStorage.getItem('token')===${JSON.stringify(token)}`), "Late ACK resumed an aborted close/page transition");
+  assert(await current.session.evaluate(`!!document.querySelector('[data-plugin-inventory]') && sessionStorage.getItem('globnotes:session:root')===${JSON.stringify(token)}`), "Late ACK resumed an aborted close/page transition");
   const policy = JSON.parse(await Deno.readTextFile(`${current.state}/plugins.json`));
   assert(policy.disabled.includes("review") && current.requests.filter(row => row.method === "PUT" && row.path.endsWith("/enabled")).length === 1, "Inventory policy was replayed or not stored");
   await outcome("inventory handoff", { policy, upstreamStatus: gate.response.status, oneWrite: true, protectedSessionRetained: true, lateHandoffNotResumed: true }); await finish();
@@ -226,44 +217,27 @@ try {
 
   if (selected("access-conflict")) {
   await fixture("access-conflict", { protectedAccount: true });
-  await access(current.session); await fill(current.session, "#setup-password", "review-fixture-new-password");
-  const bundles = [];
-  const removeBundle = current.session.page.onEvent(event => { if (event.method === "Network.responseReceived" && event.params.response.url.endsWith("/access/totp-enrolment")) bundles.push(event.params.requestId); });
-  await current.session.click("#setup-totp"); await current.session.poll("!!document.querySelector('#setup-totp-qr img')");
-  const response = await current.session.send("Network.getResponseBody", { requestId: bundles[0] });
-  const bundle = JSON.parse(response.base64Encoded ? atob(response.body) : response.body);
-  await fill(current.session, "#setup-totp-code", await current.totpClock.code(bundle.secret));
-  await fill(current.session, "#access-current-password", password);
-  await access(current.peer); await fill(current.peer, "#access-current-password", password); await current.peer.button("Save access settings");
-  await current.peer.poll("!document.querySelector('#setup-title')");
-  const before = await Deno.readTextFile(`${current.state}/config.json`);
-  await current.session.button("Save access settings");
-   await current.session.poll("[...document.querySelectorAll('button')].some(button=>button.textContent.trim()==='Review current access') && document.querySelector('[aria-labelledby=setup-title] button[type=submit]')?.disabled");
-  assert(await Deno.readTextFile(`${current.state}/config.json`) === before, "Conflicted Access changed stored credentials");
-  await capture("access-conflict-review"); await current.session.button("Review current access");
-  await current.session.poll("document.querySelector('[aria-labelledby=setup-title] [role=alert]')?.textContent.includes('Current access reviewed')");
-   assert(await current.session.evaluate("document.querySelector('#setup-password')?.value==='review-fixture-new-password' && !!document.querySelector('#setup-totp-qr img')"), "Review discarded proposal or bundle");
-  assert(bundles.length === 1 && current.requests.filter(row => row.method === "PUT" && row.path === "/_/api/access").length === 1, "Review minted/replayed Access work");
-  const oldToken = await current.session.evaluate("sessionStorage.getItem('token')");
-  const confirmed = await current.totpClock.code(bundle.secret); await fill(current.session, "#setup-totp-code", confirmed);
-  await current.session.button("Save access settings"); await current.session.poll("!!document.querySelector('#username') && !document.querySelector('#setup-title')");
-  const stored = JSON.parse(await Deno.readTextFile(`${current.state}/config.json`));
-  assert(stored.auth_type === "totp" && stored.username === username && stored.totp_key === bundle.key && stored.unrelated_fixture.retained && stored.access_revision === 2, "Reviewed explicit Access Save did not reach stored account");
-  const oldCheck = await fetch(`${current.server.baseUrl}/_/api/auth-check`, { headers: { authorization: `Bearer ${oldToken}` } }); await oldCheck.body?.cancel(); assert(oldCheck.status === 401, "Old session survived confirmed Access update");
-  if (await current.session.evaluate("!!document.querySelector('[title=\"Close sidebar\"]')?.getBoundingClientRect().width")) await current.session.click('[title="Close sidebar"]');
-  await current.session.poll("!document.querySelector('[title=\"Close sidebar\"]')?.getBoundingClientRect().width");
-  await fill(current.session, "#username", username); await fill(current.session, "#password", "review-fixture-new-password");
-   await current.totpClock.loginCode(bundle.secret, [confirmed], async code => {
-   await fill(current.session, "#one-time-code", code);
-  await current.session.button("Log In");
-  await current.session.poll("!document.querySelector('#username')");
-   assert((await api("auth-check", "GET", undefined, current.session)).status === 200, "Confirmed proposed credentials cannot log in");
-   });
-  // Access deliberately routes to login without a resource redirect; the real
-  // login consumer returns Home. Navigate to the fixture note for its viewer.
-  await current.session.goto(`${current.entryBase}/Seed`); await current.session.poll("document.querySelector('.toast-viewer')?.textContent.includes('Review seed.')");
-  await capture("access-conflict-authenticated");
-  removeBundle(); await outcome("Access conflict recovery", { conflictedBytesRetained: true, reviewedRevision: 1, finalRevision: stored.access_revision, retainedBundle: true, separateSaves: 2, oldSessionStatus: 401, confirmedLoginStatus: 200 }); await finish();
+  await access(current.session);
+  const choose = (session, level) => selectAccessLevel(session, "#access-everybody", level);
+  const accessView = await api("access", "GET", undefined, current.session);
+  const target = accessView.body.named.find(row => row.login === "review-target");
+  assert(accessView.status === 200 && target?.level === "view", "Expected an independent named grant to edit");
+  const targetField = `#access-${target.id}`;
+  await choose(current.session,'edit');
+  await selectAccessLevel(current.session, targetField, "edit");
+  await access(current.peer);await choose(current.peer,'view');
+  await commitNativeAccess(current.peer, `${current.server.baseUrl}/_/api/access`, () => current.peer.button('Save access'));
+  const before=await Deno.readTextFile(`${current.state}/access.json`),credentials=await Deno.readTextFile(`${current.directory}/state/_/accounts.json`);
+  await current.session.button('Save access');await current.session.poll("document.querySelector('[data-settings-content]')?.textContent.includes('Access was not saved.')");
+  assert(await Deno.readTextFile(`${current.state}/access.json`)===before,'Conflicted ACL write preserves current bytes');
+  await capture('access-conflict-review');await current.session.button('Review current access');await current.session.poll("document.querySelector('[data-settings-content]')?.textContent.includes('Current access reviewed')");
+  assert(await current.session.evaluate(`document.querySelector('#access-everybody')?.value===JSON.stringify('view') && document.querySelector(${JSON.stringify(targetField)})?.value===JSON.stringify('edit') && document.querySelector('[data-settings-content]')?.textContent.includes('Updated by someone else: Everybody else.')`), 'Review drops and names the overlapping choice while retaining the independent proposal');
+  assert(current.requests.filter(row=>row.method==='PUT'&&row.path==='/_/api/access').length===1,'Review does not replay writes');
+  await commitNativeAccess(current.session, `${current.entryBase}/_/api/access`, () => current.session.button('Save access'));
+  const stored=JSON.parse(await Deno.readTextFile(`${current.state}/access.json`));assert(stored.everybody==='view'&&stored.grants[target.id]==='edit'&&stored.revision===3,'Explicit retry commits only the independent edit against the reviewed ACL revision');
+  assert(await Deno.readTextFile(`${current.directory}/state/_/accounts.json`)===credentials,'ACL recovery never edits credentials');
+  assert((await api('auth-check','GET',undefined,current.session)).status===200,'Own session unaffected by ordinary ACL changes');
+  await outcome('Access conflict recovery',{conflictedBytesRetained:true,reviewedRevision:2,finalRevision:stored.revision,retainedProposal:true,peerChoicePreserved:true,separateSaves:2,credentialsUnchanged:true});await finish();
   }
 
   if (selected("browser-ownership")) {
@@ -354,19 +328,19 @@ try {
   const permissionGate = gateResponse("GET", "/_/api/plugin-host/review/permissions");
   assert((await api("plugin-host/review/commands/request", "POST", {})).status === 200, "Actual server request not admitted");
   await until(() => permissionGate.response, "Automatic permission load not reached");
-  await current.session.button("Change access\u2026");
+  await current.session.button("Add existing account");
   // Complete the wizard's own Access GET and mounted initial-focus admission
   // before measuring whether the separately held permission reply moves it.
-   await current.session.poll("!!document.querySelector('#setup-title') && document.querySelector('#setup-mode-password')?.disabled===false && document.activeElement?.id==='setup-mode-password' && document.querySelector('[data-modal-top=true] [aria-labelledby=setup-title]')?.contains(document.activeElement)");
-  const beforeFocus = await current.session.evaluate("({id:document.activeElement?.id,wizardOwnsFocus:document.querySelector('[data-modal-top=true] [aria-labelledby=setup-title]')?.contains(document.activeElement),promptPresent:!!document.querySelector('#permission-request-title')})");
+   await current.session.poll("!!document.querySelector('#access-login') && !document.querySelector('#access-login').disabled && document.querySelector('[data-modal-top=true] [role=dialog]')?.contains(document.activeElement)");
+  const beforeFocus = await current.session.evaluate("({id:document.activeElement?.id,wizardOwnsFocus:document.querySelector('[data-modal-top=true] [role=dialog]')?.contains(document.activeElement),promptPresent:!!document.querySelector('#permission-request-title')})");
   await Deno.writeTextFile(`${current.directory}/wizard-focus-before.json`, JSON.stringify(beforeFocus, null, 2), { createNew: true });
   const focus = beforeFocus.id;
   await release(permissionGate); await delay(200);
-  const afterFocus = await current.session.evaluate("({id:document.activeElement?.id,wizardOwnsFocus:document.querySelector('[data-modal-top=true] [aria-labelledby=setup-title]')?.contains(document.activeElement),promptPresent:!!document.querySelector('#permission-request-title')})");
+  const afterFocus = await current.session.evaluate("({id:document.activeElement?.id,wizardOwnsFocus:document.querySelector('[data-modal-top=true] [role=dialog]')?.contains(document.activeElement),promptPresent:!!document.querySelector('#permission-request-title')})");
   await Deno.writeTextFile(`${current.directory}/wizard-focus-after.json`, JSON.stringify(afterFocus, null, 2), { createNew: true });
   assert(!afterFocus.promptPresent && afterFocus.wizardOwnsFocus && afterFocus.id === focus, "Late automatic load overtook wizard/focus");
   await capture("prompt-postponed-behind-access");
-  await current.session.click('[aria-label="Dismiss setup"]'); await current.session.poll("!!document.querySelector('#permission-request-title')");
+  await current.session.button('Cancel','[data-modal-top=true]'); await current.session.poll("!!document.querySelector('#permission-request-title')");
   const pending = (await api("plugin-host/review/permissions")).body;
   assert(pending.pendingRequests.length === 1 && !pending.approvedNetwork.length && !pending.allowNetwork && current.requests.filter(row => row.method === "POST" && row.path.includes("/decision")).length === 0, "Postponement deferred/denied/granted server state");
   assert(current.requests.filter(row => row.method === "GET" && row.path.endsWith("/permissions")).length >= 2, "Prompt reused cached failed/superseded admission");

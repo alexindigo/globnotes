@@ -2,7 +2,7 @@
 import { nativeSession } from "./native-cdp-session.mjs";
 import { showSidebar } from './sidebar-navigation-native.mjs';
 import { fileURLToPath } from "node:url";
-import { bootServer } from "./harness-helpers.mjs";
+import { bootServer, nativeFixtureAdmin } from "./harness-helpers.mjs";
 import { executeChild } from "./legacy-native-suite.mjs";
 import { BACKUP_CASES } from "./native-fixture-cases.mjs";
 import { openBackupWork, recordBackupNegative, requireBackupNegative } from "../helpers/backup-controls.js";
@@ -33,6 +33,7 @@ const variant = options.variant && BACKUP_CASES.find(item => item.label === opti
 if (seen.has("--variant") && (!variant || options.controls || options.case || options.negative)) throw Error("--variant requires one known independent backup fixture");
 await Deno.mkdir(options.artifacts, { mode: 0o700 });
 const artifacts = options.artifacts, assert = (value, message) => { if (!value) throw new Error(message); };
+const settingsRoute = "/_/api/plugin-host/globnotes-backup/settings/backup";
 const equal = (actual, expected, message) => assert(JSON.stringify(actual) === JSON.stringify(expected), `${message}; actual=${JSON.stringify(actual)} expected=${JSON.stringify(expected)}`);
 const deltas = {
   count: [["const planned = stages.slice(0, config.count)", "const planned = stages.slice(0, Math.min(3, config.count + 1))"], ["Math.min(journal.count, journal.old.length + 1)", "Math.min(Math.min(3, journal.count + 1), journal.old.length + 1)"]],
@@ -85,11 +86,12 @@ if (options.controls) {
   const build = await repositoryBuild(undefined, { required: true });
   const outcomes = [], fixtures = [];
   let current;
-  async function api(route, method = "GET", body) {
-    const response = await fetch(current.server.baseUrl + route, { method, headers: body === undefined ? {} : { "content-type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.timeout(30_000) });
+  async function api(route, method = "GET", body, headers = {}) {
+    const response = await fetch(current.server.baseUrl + route, { method, headers: { ...headers, ...(body === undefined ? {} : { "content-type": "application/json" }) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.timeout(30_000) });
     return { status: response.status, body: await response.json() };
   }
-  const settings = () => api("/_/api/plugin-host/globnotes-backup/settings/backup");
+  const settings = () => api(settingsRoute, "GET", undefined, current.adminHeaders);
+  const readCatalog = () => api("/_/api/plugin-host", "GET", undefined, current.adminHeaders);
   const readStatus = () => api("/_/api/plugins/globnotes-backup/status");
   const status = () => current.work.status();
   async function picture(name, session = current.session) {
@@ -121,9 +123,12 @@ if (options.controls) {
       assert(owner.vault === current.vault, "Startup observation must own this fixture");
       if (!owner.baseUrl) return;
       owner.exited.then(() => observation.abort());
+      let headers;
       while (!finished) {
         try {
-          const response = await fetch(`${owner.baseUrl}/_/api/plugin-host`, { signal: AbortSignal.any([AbortSignal.timeout(1000), observation.signal]) });
+          const signal = AbortSignal.any([AbortSignal.timeout(1000), observation.signal]);
+          headers ??= (await nativeFixtureAdmin(owner, { signal })).headers;
+          const response = await fetch(`${owner.baseUrl}/_/api/plugin-host`, { headers, signal });
           if (response.ok) { const catalog = await response.json(); samples.push({ time: Date.now(), plugins: catalog.plugins.map(plugin => ({ id: plugin.id, status: plugin.status, diagnostics: plugin.diagnostics })) }); }
           else await response.body?.cancel();
         } catch (error) { samples.push({ time: Date.now(), unavailable: error.name }); }
@@ -134,6 +139,7 @@ if (options.controls) {
       current.server = await boot;
       current.serverClosed = false;
       current.servers.push({ pid: current.server.pid, baseUrl: current.server.baseUrl, directory });
+      ({ headers: current.adminHeaders } = await nativeFixtureAdmin(current.server));
       current.work = await openBackupWork(current.server, { kind: current.label, negative: options.negative, restarted: current.generation > 1, readStatus });
     }
     finally { finished = true; observation.abort(); admitted.resolve({ baseUrl: null, vault: current.vault }); await observe; await publishRecord(`${directory}/startup-catalogs.json`, JSON.stringify(samples, null, 2), { createNew: true }); }
@@ -146,7 +152,7 @@ if (options.controls) {
     await Deno.mkdir(current.vault); await Deno.mkdir(current.state, { recursive: true });
     await Deno.mkdir(`${current.vault}/misplaced`); await Deno.mkdir(`${current.vault}/dedicated`);
     await Deno.writeTextFile(`${current.vault}/Note.md`, "A");
-    ({ fixtureScenario: current.fixtureScenario } = await nativeFixtureInput(nativeAccountScenario(label === "settings-lock" ? { settingsWritable: false } : {})));
+    ({ fixtureScenario: current.fixtureScenario } = await nativeFixtureInput(nativeAccountScenario()));
     if (seed) { await Deno.mkdir(`${current.state}/plugin-data/globnotes-backup`, { recursive: true }); await publishRecord(`${current.state}/plugin-data/globnotes-backup/settings.json`, JSON.stringify({ schemaVersion: 1, revision: 1, values: { backup: seed } })); }
     if (["recovery", "cleanup", "retarget"].includes(label)) {
       const plugin = `${current.state}/plugins/globnotes-backup`; await copyRepositorySources("backup-plugin", plugin);
@@ -171,21 +177,36 @@ if (options.controls) {
     await launch(env);
     current.session = await nativeSession({ port: Number(Deno.env.get("CDP_PORT") ?? 9335) });
     current.sessionClosed = false;
-    await current.session.goto(`${current.server.baseUrl}/Note`);
-    await current.session.poll("!!document.querySelector('.toast-viewer')");
+    await openNote();
     await current.session.evaluate("document.fonts.ready.then(()=>true)");
     await publishRecord(`${directory}/ownership.json`, JSON.stringify({ vault: current.vault, state: current.state, pid: current.server.pid, baseUrl: current.server.baseUrl, targetId: current.session.targetId, browserContextId: current.session.browserContextId }, null, 2), { createNew: true });
   }
-  async function open() {
+  async function openNote() {
+    const { session, server, label } = current;
+    if (label === "settings-lock") await session.goto(`${server.baseUrl}/Note`);
+    else {
+      const { login, password } = nativeAccountScenario().identity.people[0];
+      await session.goto(`${server.baseUrl}/_/login?redirect=/Note`);
+      await session.click("#identity-login-name"); await session.type(login);
+      await session.click("#identity-login-password"); await session.type(password);
+      await session.button("Continue", ".identity-login");
+    }
+    await session.poll("location.pathname==='/Note' && !!document.querySelector('.toast-viewer')");
+    const proof = await session.evaluate("fetch('/_/api/auth-check').then(r=>r.json())");
+    assert(proof.capabilities.canEdit && (label === "settings-lock" ? proof.principal.kind === "guest" && !proof.capabilities.canManageVault : proof.capabilities.canManageVault), "Wrong browser authority for backup fixture");
+  }
+  async function openSettingsFrame() {
     const session = current.session;
     if (!await session.evaluate("!!document.querySelector('#settings-modal-title')")) {
       await showSidebar(session);
       await session.click('[aria-label="Settings"]'); await session.poll("!!document.querySelector('#settings-modal-title')");
     }
+  }
+  async function open() {
+    const session = current.session;
+    await openSettingsFrame();
     await session.click('[data-settings-nav-id="plugin:globnotes-backup"]');
-    await session.poll(current.label === 'settings-lock'
-      ? "document.querySelector('#settings-field-retention')?.matches('span[aria-labelledby]') && document.querySelector('#settings-field-basePath')?.matches('span[aria-labelledby]')"
-      : "document.querySelector('#settings-field-retention')?.matches('input[type=range]:not([disabled]):not([readonly])') && document.querySelector('#settings-field-retention').value !== ''");
+    await session.poll("document.querySelector('#settings-field-retention')?.matches('input[type=range]:not([disabled]):not([readonly])') && document.querySelector('#settings-field-retention').value !== ''");
     await session.evaluate("document.fonts.ready.then(()=>true)");
   }
   async function closeSettings() { await current.session.click('[aria-label="Close settings"]'); await current.session.poll("!document.querySelector('#settings-modal-title')"); }
@@ -233,7 +254,7 @@ if (options.controls) {
   async function restart(env = {}) {
     await publishRecord(`${current.directory}/restart-${current.generation}-before.json`, JSON.stringify({ settings: await settings(), status: await status(), live: await Deno.readTextFile(`${current.vault}/Note.md`) }, null, 2), { createNew: true });
     await closeServer(current); await launch(env);
-    await current.session.goto(`${current.server.baseUrl}/Note`); await current.session.poll("!!document.querySelector('.toast-viewer')");
+    await openNote();
     await current.session.evaluate("document.fonts.ready.then(()=>true)");
   }
   try {
@@ -334,7 +355,7 @@ if (options.controls) {
             { label: "backup server", exit: current.server.exited },
             owner,
           ]);
-          const held = (await api("/_/api/plugin-host")).body.plugins.find(plugin => plugin.id === "globnotes-backup").work;
+          const held = (await readCatalog()).body.plugins.find(plugin => plugin.id === "globnotes-backup").work;
           equal(held.versioning, { admitted: 2, settled: 1, pending: 1, failures: 0, lastFailure: null },
             "BACKUP_NATIVE_retarget: second capture held before publication");
           Deno.removeSync(alias); Deno.symlinkSync(second, alias);
@@ -367,9 +388,14 @@ if (options.controls) {
          await closeSettings(); assert(await session.evaluate("document.querySelector('.cm-content')===window.__backupEditor && document.querySelector('.cm-content')?.textContent.includes('dirty retained')"), "BACKUP_NATIVE_failure: modal close retains newer draft");
         await finish(kind, { failed, editorRetained: true, draftRetained: true, urlRetained: true });
       } else {
-         await fixture("settings-lock"); await open(); assert(await current.session.read(['#settings-field-retention', '#settings-field-basePath'], "(()=>{const values=[...document.querySelectorAll('#settings-field-retention,#settings-field-basePath')];return values.length===2 && values.every(value=>value.matches('span[aria-labelledby]') && value.closest('.setting-row').querySelectorAll('input,button,select,textarea').length===0) && document.querySelector('#settings-field-retention').textContent==='2' && document.querySelector('#settings-field-basePath').textContent==='';})()"), "BACKUP_NATIVE_settings-lock: both retained values and no mutation controls");
-        const before = (await settings()).body;
-        equal((await api("/_/api/plugin-host/globnotes-backup/settings/backup", "PUT", { revision: before.revision, sourceKey: before.sourceKey, values: { retention: 3, basePath: "" } })).status, 403, "BACKUP_NATIVE_settings-lock: API rejects settings mutation");
+        await fixture("settings-lock"); await openSettingsFrame();
+        assert(await current.session.read('#settings-modal-title', "!document.querySelector('[data-settings-nav-id=\"plugin:globnotes-backup\"], #settings-field-retention, #settings-field-basePath')"), "BACKUP_NATIVE_settings-lock: Guest Edit has no Admin settings page or mutation controls");
+        const admin = await settings(), before = admin.body;
+        equal([admin.status, before.values], [200, { retention: 2, basePath: "" }], "BACKUP_NATIVE_settings-lock: both retained values are available to Admin");
+        // Backup has no browser contribution, so it has no guest values projection.
+        equal(await api(settingsRoute), { status: 403, body: { detail: "This account cannot perform that operation.", code: "operation_not_permitted" } }, "BACKUP_NATIVE_settings-lock: Guest Edit cannot disclose server-only settings");
+        equal((await api(settingsRoute, "PUT", { revision: before.revision, sourceKey: before.sourceKey, values: { retention: 3, basePath: "" } })).status, 403, "BACKUP_NATIVE_settings-lock: API rejects settings mutation");
+        equal((await settings()).body, before, "BACKUP_NATIVE_settings-lock: denied mutation did not change Admin settings");
         await closeSettings(); await save("Note", "B"); await ring(current.vault, "Note", ["A"], "settings-lock"); await finish("settings-lock", { noteWritable: true, settingsWritable: false });
       }
     }
@@ -383,7 +409,7 @@ if (options.controls) {
         diagnostics: async () => {
           await failureRecord();
           // Raw reads retain the original failed fence instead of re-entering it.
-          const catalog = (await api("/_/api/plugin-host")).body.plugins.find(plugin => plugin.id === "globnotes-backup");
+          const catalog = (await readCatalog()).body.plugins.find(plugin => plugin.id === "globnotes-backup");
           const readSlot = path => Deno.readTextFile(path).catch(error => { if (error instanceof Deno.errors.NotFound) return null; throw error; });
           const state = { catalog, settings: await settings(), status: await readStatus(), vault: current.vault,
             live: await Deno.readTextFile(`${current.vault}/Note.md`), firstSlot: await Deno.readTextFile(`${current.vault}/Note.md.0.bak`).catch(error => { if (error instanceof Deno.errors.NotFound) return null; throw error; }),

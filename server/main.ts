@@ -13,7 +13,7 @@
  */
 
 import { pathfinder } from "@pathfinder/pathfinder";
-import { LocalAuth } from "./auth/local.ts";
+import { openInstanceIdentity } from "./auth/instance.ts";
 import { FileServing } from "./files/file_serving.ts";
 import { FileSystemNotes } from "./notes/file_system.ts";
 import { NoteOperations } from "./notes/operations.ts";
@@ -27,12 +27,12 @@ import { PluginActions } from "./plugins/actions.ts";
 import { AuxiliaryFilesystem } from "./plugins/auxiliary_fs.ts";
 import { PluginDataStore } from "./plugins/data.ts";
 import { PluginEndpoints } from "./plugins/endpoints.ts";
-import { PluginLifecycle } from "./plugins/lifecycle.ts";
 import { PluginManager } from "./plugins/manager.ts";
 import { servicePluginRpc } from "./plugins/rpc.ts";
-import { AuthType, GlobalConfig } from "./config.ts";
+import { GlobalConfig } from "./config.ts";
 import { rewriteIndexHtml } from "./helpers.ts";
 import { admitHost, createRebindingWarner } from "./host_admission.ts";
+import { withRequestBodyLifetime } from "./http_request.ts";
 import { initializeLogger, logger } from "./logger.ts";
 import { config, configuration } from "./config/loader.ts";
 import {
@@ -41,7 +41,7 @@ import {
 } from "./config/single_vault.ts";
 import { pluginSettings, serviceSettings } from "./config/consumers.ts";
 import { snapshotEnvironment } from "./environment.ts";
-import { createMcpEndpoint } from "./mcp/endpoint.ts";
+import { createMcpEndpoint, identityMcpCaller } from "./mcp/endpoint.ts";
 import { createRateLimiter } from "./mcp/rate_limit.ts";
 import { initState, state } from "./state.ts";
 import { Fts5Indexer } from "./search/fts5.ts";
@@ -80,8 +80,8 @@ const plugins = new PluginManager(
   globalConfig.statePath,
   {
     // All worker roles (including legacy render replicas) go write:false
-    // while setup is pending or the vault is read-only.
-    renderWritable: () => state.lifecycle?.writable() ?? true,
+    // until initialized service ownership is available.
+    renderWritable: () => state.lifecycle?.writable() ?? false,
     // Policy writes commit through the short policy gate (wired below).
     persistence: {
       commit: (effect) => state.lifecycle!.gate.run(effect),
@@ -100,12 +100,14 @@ try {
 }
 initializeLogger(globalConfig.resolved.instance.log.level);
 logger.info(`globnotes ${formatVersion(appVersion)}`);
-const auth = globalConfig.authType === AuthType.PASSWORD ||
-    globalConfig.authType === AuthType.TOTP
-  ? new LocalAuth(globalConfig, services.sessions)
-  : null;
+let identity: Awaited<ReturnType<typeof openInstanceIdentity>>;
 try {
   globalConfig.resolved.vault.prepareParents();
+  identity = await openInstanceIdentity(
+    globalConfig,
+    () => plugins,
+    appVersion,
+  );
 } catch (error) {
   console.error((error as Error).message);
   Deno.exit(1);
@@ -118,13 +120,13 @@ const hub = new VaultHub(
   services.hub,
 );
 const gate = new HubGate({ hub, versioning: () => plugins.runtime });
-initState(globalConfig, auth, notes, indexer, fileServing, plugins, hub);
+initState(globalConfig, identity, notes, indexer, fileServing, plugins, hub);
 
 // Guarded-operation bundle: lifecycle (epochs/gates) → operations facade →
 // deferred action queue → authoritative service runtime. Service
 // contributions start after setup completes, independent of rendering or
 // browser login; pure rendering stays lazy.
-const lifecycle = new PluginLifecycle(globalConfig);
+const lifecycle = identity.composition.lifecycle;
 const operations = new NoteOperations({
   notes,
   files: fileServing,
@@ -175,6 +177,7 @@ state.pluginNetwork = plugins.network;
 // plugin guards as the REST API. Disabled, /_/mcp answers 404.
 state.mcp = globalConfig.mcpEnabled
   ? createMcpEndpoint({
+    callerAccess: identityMcpCaller(identity.composition.auth),
     rateLimiter: createRateLimiter({ perMinute: globalConfig.mcpRateLimit }),
   })
   : null;
@@ -235,7 +238,7 @@ subscribeExternalFacts(hub, lifecycle);
 const drivers = new DriverSupervisor({ hub, operations, plugins, lifecycle });
 state.drivers = drivers;
 plugins.configureDrivers(drivers);
-if (!globalConfig.setupRequired) {
+if (!identity.bootstrap.status().setupRequired) {
   plugins.reconcileOwners().catch(() =>
     logger.error("plugin owner reconciliation failed")
   );
@@ -256,22 +259,22 @@ try {
   logger.debug("client/dist/index.html not present; skipping rewrite.");
 }
 
-if (globalConfig.setupRequired) {
+if (identity.bootstrap.status().setupRequired) {
   logger.info("First-run setup required. Open the web UI to complete setup.");
-} else if (globalConfig.authType === AuthType.NONE) {
-  logger.warning(
-    "globnotes is running with NO authentication. Anyone who can " +
-      "reach this server can read and modify notes.",
-  );
 }
 // DNS-rebinding exposure (server/host_admission.ts): checked now and after
-// every access-policy change, so a first-run setup or an access-settings
-// change to none/read_only without GLOBNOTES__SERVER_ALLOWEDHOSTS warns too.
+// every access-policy change, including setup and Everybody else changes.
 const rebindingWarner = createRebindingWarner((message) =>
   logger.warning(message)
 );
-rebindingWarner.update(state.config);
-lifecycle.onPolicyChange(() => rebindingWarner.update(state.config));
+const updateExposure = () =>
+  rebindingWarner.update({
+    setupRequired: identity.bootstrap.status().setupRequired,
+    everybody: identity.acl.capture().value.everybody,
+    allowedHosts: globalConfig.allowedHosts,
+  });
+updateExposure();
+const unbindExposure = identity.composition.subscribe(updateExposure);
 const hostname = globalConfig.resolved.instance.server.host;
 const port = globalConfig.resolved.instance.server.port;
 const prefix = globalConfig.pathPrefix;
@@ -281,22 +284,25 @@ const app = await pathfinder({
 });
 
 const allowedHosts = globalConfig.allowedHosts;
-const httpServer = Deno.serve({ hostname, port }, (req, info) => {
-  // Host admission first: one check for every route (server/host_admission.ts).
-  const misdirected = admitHost(allowedHosts, req);
-  if (misdirected) return misdirected;
-  if (!prefix) return app(req, info);
-  const url = new URL(req.url);
-  // Exact segment matching: /notes-other is NOT the /notes app.
-  if (url.pathname !== prefix && !url.pathname.startsWith(prefix + "/")) {
-    return Response.json({ detail: "Not Found" }, { status: 404 });
-  }
-  const stripped = url.pathname.slice(prefix.length) || "/";
-  const target = new URL(stripped, url.origin);
-  // The prefix wrapper must preserve the query — plugin APIs depend on it.
-  target.search = url.search;
-  return app(new Request(target, req), info);
-});
+const httpServer = Deno.serve(
+  { hostname, port },
+  withRequestBodyLifetime((req, info: Deno.ServeHandlerInfo) => {
+    // Host admission first: one check for every route (server/host_admission.ts).
+    const misdirected = admitHost(allowedHosts, req);
+    if (misdirected) return misdirected;
+    if (!prefix) return app(req, info);
+    const url = new URL(req.url);
+    // Exact segment matching: /notes-other is NOT the /notes app.
+    if (url.pathname !== prefix && !url.pathname.startsWith(prefix + "/")) {
+      return Response.json({ detail: "Not Found" }, { status: 404 });
+    }
+    const stripped = url.pathname.slice(prefix.length) || "/";
+    const target = new URL(stripped, url.origin);
+    // The prefix wrapper must preserve the query — plugin APIs depend on it.
+    target.search = url.search;
+    return app(new Request(target, req), info);
+  }),
+);
 // Retire driver admission before closing either key custody or hub metadata.
 let shuttingDown = false;
 const shutdown = async () => {
@@ -307,6 +313,8 @@ const shutdown = async () => {
   plugins.stop();
   metadata.stop();
   hub.stop();
+  unbindExposure();
+  await identity.close();
   // Persistent browser streams do not have a natural completion. Process exit
   // closes them after the owned driver/storage teardown, as SIGTERM did before.
   Deno.exit();

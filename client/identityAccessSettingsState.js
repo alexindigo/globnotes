@@ -54,7 +54,7 @@ export function createIdentityAccessSettingsState({ read = getIdentityAccess, wr
   }
   const dirty = computed(() => changes.size > 0);
   const pending = computed(() => !!aclAction.value);
-  const inFlight = computed(() => !!submission.value?.wirePending);
+  const inFlight = computed(() => !!aclAction.value?.wire);
   const unknown = computed(() => !!submission.value?.unknown);
   const reviewing = computed(() => !!aclReview.value);
   const provisioning = computed(() => !!creation.value && (!creation.value.unknown || creation.value.checking));
@@ -68,9 +68,9 @@ export function createIdentityAccessSettingsState({ read = getIdentityAccess, wr
     if (declared?.accountId) ids.add(declared.accountId);
     return [...ids].map(id => ({ id, login: labels.get(id) ?? (id === declared?.accountId ? declared.login : id),
       level: id === declared?.accountId ? "admin" : grants.value[id], serverSet: id === declared?.accountId,
-      you: id === form.account?.id, canEdit: editableRows.value && id !== declared?.accountId }));
+      you: id === form.account?.id, canEdit: mutable.value && id !== declared?.accountId }));
   });
-  const canReview = computed(() => original() && (unknown.value || fields.needsReview) && !pending.value && !reviewing.value && !fields.loading);
+  const canReview = computed(() => original() && (unknown.value || fields.needsReview) && !busy.value);
   const canCheckCreation = computed(() => original() && provisioningUnknown.value && !creation.value.checking);
   const state = readonly(reactive({ ...Object.fromEntries(Object.keys(fields).map(key => [key, computed(() => fields[key])])),
     pending, inFlight, unknown, reviewing, provisioning, provisioningUnknown,
@@ -169,8 +169,8 @@ export function createIdentityAccessSettingsState({ read = getIdentityAccess, wr
   function releaseReview(work) {
     void work.promise.finally(() => work.owner.release(work.operation)).catch(() => {});
   }
-  async function load({ retain = false } = {}, creationOwner) {
-    if (!current() || !canManage() || inFlight.value || provisioning.value && creation.value !== creationOwner || !retain && (dirty.value || unknown.value || provisioningUnknown.value)) return null;
+  async function load({ retain = false } = {}, owner) {
+    if (!current() || !canManage() || pending.value && aclAction.value !== owner || provisioning.value && creation.value !== owner || !retain && (dirty.value || unknown.value || provisioningUnknown.value)) return null;
     const own = ++ticket, work = start(live, "read", {}); fields.loading = true;
     const wire = work.promise.then(handle => live.deliver(work.operation, "view", { operation: work.operation, ticket: own, view: handle.value, retain }))
       .finally(() => live.release(work.operation));
@@ -204,9 +204,17 @@ export function createIdentityAccessSettingsState({ read = getIdentityAccess, wr
     submission.value = null;
     if (original()) completed(result);
   }
-  async function refresh() { if (current() && canManage()) await load(); }
+  async function refresh(owner) { if (current() && canManage()) await load({}, owner); }
   function preflight(before, authorize, action) {
-    const own = {};
+    const own = shallowReactive({ wire: null, observed: false, observation: null });
+    function releaseIfSettled() {
+      if (aclAction.value === own && own.observed && !own.wire) aclAction.value = null;
+    }
+    const retainWire = wire => {
+      own.wire = wire;
+      const release = () => { own.wire = null; releaseIfSettled(); };
+      void wire.then(release, release);
+    };
     own.observation = Promise.resolve().then(async () => {
       try {
         if (await authorize() !== true || !canManage() || !current() || before !== fields.view) return false;
@@ -214,8 +222,8 @@ export function createIdentityAccessSettingsState({ read = getIdentityAccess, wr
         if (current() && aclAction.value === own) fields.error = "Access was not saved. Review your choices and try again.";
         return false;
       }
-      return await action();
-    }).finally(() => { if (aclAction.value === own) aclAction.value = null; });
+      return await action(own, retainWire);
+    }).finally(() => { own.observed = true; releaseIfSettled(); });
     // Publish the owner and its join before calling even a synchronous adapter.
     aclAction.value = own;
     return own.observation;
@@ -232,19 +240,19 @@ export function createIdentityAccessSettingsState({ read = getIdentityAccess, wr
   function commit(before, authorize = beforeCommit, additions) {
     if (!mutable.value || before !== fields.view) return aclAction.value?.observation ?? Promise.resolve(false);
     const proposed = snapshot({ ...payload(), additions });
-    return preflight(before, authorize, async () => {
+    return preflight(before, authorize, async (own, retainWire) => {
       const payload = Object.freeze({ ...proposed, revision: before.revision, signature: before.signature, updateId: createUuid() });
-      const attempt = shallowReactive({ payload, wirePending: true, unknown: false, receipt: null });
+      const attempt = shallowReactive({ payload, unknown: false, receipt: null });
       fields.error = ""; submission.value = attempt;
       const work = start(live, "write", { payload }, "retained");
       const wire = trackWire(work, async (result, error) => {
         if (!ownsAcl(attempt)) return !!attempt.receipt;
         if (!error) live.complete(work.operation, { kind: "write", attempt, result });
         if (!attempt.receipt) refuseAcl(attempt, error);
-        attempt.wirePending = false;
-        if (attempt.receipt?.capabilities?.canManageVault) await refresh();
+        if (attempt.receipt?.capabilities?.canManageVault) await refresh(own);
         return !!attempt.receipt;
       });
+      retainWire(wire);
       try { return await observe(wire); }
       catch (error) { if (!attempt.unknown) refuseAcl(attempt, error); return !!attempt.receipt; }
     });
@@ -294,7 +302,7 @@ export function createIdentityAccessSettingsState({ read = getIdentityAccess, wr
           if (attempt.receipt?.capabilities?.canManageVault) await refresh();
           return !!attempt.receipt;
         }
-        fields.error = attempt.wirePending ? "The original access change is still pending. Review its outcome again before continuing." : "The submitted access change could not be confirmed. Your choices are retained; do not repeat it automatically.";
+        fields.error = "The submitted access change could not be confirmed. Your choices are retained; do not repeat it automatically.";
         return false;
       } finally { releaseReview(work); }
     } catch { if (ownsReview()) fields.error = "Connection lost. Your access choices are retained."; return false; }
@@ -310,10 +318,10 @@ export function createIdentityAccessSettingsState({ read = getIdentityAccess, wr
   }
   async function resolveDeparture(reason, decision) {
     if (aclAction.value) await aclAction.value.observation;
-    if (fields.confirmation || inFlight.value || reviewing.value || provisioning.value) return false;
+    if (fields.confirmation || pending.value || reviewing.value || provisioning.value) return false;
     if (!dirty.value && !unknown.value && !provisioningUnknown.value) return true;
     const choice = decision ?? await confirmDeparture({ reason, pages: [{ page: { label: "Access" }, uncertain: unknown.value || provisioningUnknown.value, canSave: state.canSave }], canSave: state.canSave });
-    if (choice === "save") { await requestCommit({ alreadyResolved: decision !== undefined }); return !fields.confirmation && !dirty.value && !unknown.value && !inFlight.value && !creation.value; }
+    if (choice === "save") { await requestCommit({ alreadyResolved: decision !== undefined }); return !fields.confirmation && !dirty.value && !unknown.value && !pending.value && !creation.value; }
     if (choice === "discard") return await discard();
     return false;
   }
@@ -405,7 +413,7 @@ export function createIdentityAccessSettingsState({ read = getIdentityAccess, wr
           await Promise.all([live.settle(), recovery.settle()]);
         })());
       } catch { return false; }
-      return !inFlight.value && !provisioning.value;
+      return !pending.value && !provisioning.value;
     },
     invalidate() { if (dirty.value || unknown.value || creation.value || busy.value) return false; ticket++; fields.view = null; return true; },
     revoke() { revoked.value = true; live.revoke(); },

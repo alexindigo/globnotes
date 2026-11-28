@@ -2,8 +2,10 @@
 export const operation = "readVault";
 
 import type { PathfinderRequest } from "@pathfinder/pathfinder";
-import type { ViewerAuthority } from "@server/auth/authority.ts";
-import type { createInstanceAuth } from "@server/auth/middleware.ts";
+import {
+  activeAuth,
+  type createInstanceAuth,
+} from "@server/auth/middleware.ts";
 import { createHttpPolicy } from "@server/auth/http_policy.ts";
 import { renderResponse } from "@server/render/response.ts";
 
@@ -12,11 +14,11 @@ export function createIdentityRender(
 ) {
   const policy = createHttpPolicy(auth);
   return async (request: PathfinderRequest) => {
-    return await policy.read(
-      request._raw,
-      "readVault",
-      ({ viewer }) => renderBuffer(request, viewer),
-    );
+    return await policy.read(request._raw, "readVault", async (lease) => {
+      const content = await request.body.text();
+      lease.assertCurrent();
+      return await renderResponse(content, request.query, lease.viewer);
+    });
   };
 }
 
@@ -27,12 +29,5 @@ export function createIdentityRender(
  * match the GET path: `disabled` (comma-separated plugin ids, from the
  * client's localStorage plugin switches) and `lineNumbers=true`. */
 export default function (request: PathfinderRequest): Promise<Response> {
-  return renderBuffer(request);
-}
-
-async function renderBuffer(
-  request: PathfinderRequest,
-  viewer?: ViewerAuthority,
-) {
-  return await renderResponse(await request.body.text(), request.query, viewer);
+  return createIdentityRender(activeAuth())(request);
 }

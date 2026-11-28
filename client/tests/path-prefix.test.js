@@ -2,7 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import { readPathPrefix } from "../pathPrefix.js";
-import { storeToken, clearStoredToken } from "../tokenStorage.js";
+import { createIdentityTokenStorage } from "../tokenStorage.js";
+import { identityTokenScope } from "../../shared/identity_token.ts";
 
 vi.mock("../api.js", () => ({ getPluginHostCatalog: vi.fn(), openPluginHostEvents: vi.fn(), invokePluginCommand: vi.fn(), getPluginSettings: vi.fn() }));
 
@@ -28,14 +29,21 @@ describe("shared path-prefix reader", () => {
     const meta = prefix("/notes"); expect(readPathPrefix()).toBe("/notes");
     meta.content = "/nested notes/"; expect(readPathPrefix()).toBe("/nested notes/");
   });
-  it("retains cookie root fallback and reads a changed prefix at token operations", () => {
+  it("uses the cookie root fallback and binds each token owner to its instance prefix", () => {
     const cookie = vi.spyOn(document, "cookie", "set");
     try {
-      storeToken("root"); expect(cookie).toHaveBeenLastCalledWith("token=root; Path=/; SameSite=Strict");
-      prefix("/notes"); storeToken("nested", true);
-      expect(cookie).toHaveBeenLastCalledWith("token=nested; Path=/notes; SameSite=Strict");
-      expect(localStorage.getItem("token")).toBe("nested");
-      clearStoredToken(); expect(cookie.mock.calls.at(-1)[0]).toContain("Path=/notes; SameSite=Strict; expires=");
+      const root = createIdentityTokenStorage();
+      root.storeToken("root", true);
+      expect(cookie).toHaveBeenLastCalledWith("globnotes_session_root=root; Path=/; SameSite=Strict");
+      const meta = prefix("/notes"), nested = createIdentityTokenStorage();
+      meta.content = "/changed";
+      nested.storeToken("nested", true);
+      expect(cookie).toHaveBeenLastCalledWith("globnotes_session_2f6e6f746573=nested; Path=/notes; SameSite=Strict");
+      expect(localStorage.getItem(identityTokenScope("/notes").key)).toBe("nested");
+      expect(localStorage.getItem(identityTokenScope("/changed").key)).toBeNull();
+      nested.clearStoredToken();
+      expect(cookie).toHaveBeenLastCalledWith("globnotes_session_2f6e6f746573=; Path=/notes; SameSite=Strict; Max-Age=0");
+      expect([root.getStoredToken(), nested.getStoredToken()]).toEqual(["root", null]);
     } finally { cookie.mockRestore(); }
   });
   it("Logo and branding adapters produce the same prefixed custom-asset consumer URLs", async () => {

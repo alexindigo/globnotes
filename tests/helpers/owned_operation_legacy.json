@@ -328,22 +328,6 @@
     "family": "coordination:client/tests/e2e/plugin-prefix-auth.mjs"
   },
   {
-    "file": "client/tests/e2e/plugin-prefix-auth.mjs",
-    "capability": "Promise.*",
-    "line": 219,
-    "source": "Promise",
-    "context": "for (const end = Date.now() + 3500; !expired.state.closed;) { assert(Date.now() < end, \"Prefix/auth consumer observation deadline\"); await new Promise(resolve => setTimeout(resolve, 25)); }",
-    "family": "coordination:client/tests/e2e/plugin-prefix-auth.mjs"
-  },
-  {
-    "file": "client/tests/e2e/plugin-prefix-auth.mjs",
-    "capability": "setTimeout.*",
-    "line": 219,
-    "source": "setTimeout",
-    "context": "for (const end = Date.now() + 3500; !expired.state.closed;) { assert(Date.now() < end, \"Prefix/auth consumer observation deadline\"); await new Promise(resolve => setTimeout(resolve, 25)); }",
-    "family": "coordination:client/tests/e2e/plugin-prefix-auth.mjs"
-  },
-  {
     "file": "client/tests/e2e/plugin-review-repairs.mjs",
     "capability": "Promise.*",
     "line": 21,
@@ -414,30 +398,6 @@
     "source": "setTimeout",
     "context": "timer = setTimeout(() => reject(new Error(`${phase}: CDP timeout`)), timeout);",
     "family": "coordination:client/tests/e2e/save-preview.mjs"
-  },
-  {
-    "file": "client/tests/e2e/settings-foundations.mjs",
-    "capability": "Promise.*",
-    "line": 53,
-    "source": "Promise",
-    "context": "const status = await Promise.race([child.status, new Promise(resolve => { timer = setTimeout(() => resolve(null), 5000); })]);",
-    "family": "coordination:client/tests/e2e/settings-foundations.mjs"
-  },
-  {
-    "file": "client/tests/e2e/settings-foundations.mjs",
-    "capability": "Promise.race",
-    "line": 53,
-    "source": "Promise.race",
-    "context": "const status = await Promise.race([child.status, new Promise(resolve => { timer = setTimeout(() => resolve(null), 5000); })]);",
-    "family": "coordination:client/tests/e2e/settings-foundations.mjs"
-  },
-  {
-    "file": "client/tests/e2e/settings-foundations.mjs",
-    "capability": "setTimeout.*",
-    "line": 53,
-    "source": "setTimeout",
-    "context": "const status = await Promise.race([child.status, new Promise(resolve => { timer = setTimeout(() => resolve(null), 5000); })]);",
-    "family": "coordination:client/tests/e2e/settings-foundations.mjs"
   },
   {
     "file": "client/tests/e2e/settings-pending-native.mjs",
@@ -526,102 +486,6 @@
     "source": "Promise",
     "context": "const waiting = new Promise<void>((resolve) => {",
     "family": "coordination:tests/access_commit_guards_test.ts"
-  },
-  {
-    "file": "tests/access_settings_test.ts",
-    "capability": "Promise.*",
-    "line": 547,
-    "source": "Promise",
-    "context": "const arrived = new Promise<void>((resolve) => {",
-    "family": "coordination:tests/access_settings_test.ts"
-  },
-  {
-    "file": "tests/access_settings_test.ts",
-    "capability": "Promise.*",
-    "line": 550,
-    "source": "Promise",
-    "context": "const suspended = new Promise<void>((resolve) => {",
-    "family": "coordination:tests/access_settings_test.ts"
-  },
-  {
-    "file": "tests/access_settings_test.ts",
-    "capability": "Promise.*",
-    "line": 599,
-    "source": "Promise",
-    "context": "const policyArrived = new Promise<void>((resolve) => {",
-    "family": "coordination:tests/access_settings_test.ts"
-  },
-  {
-    "file": "tests/access_settings_test.ts",
-    "capability": "Promise.*",
-    "line": 602,
-    "source": "Promise",
-    "context": "const policyWait = new Promise<void>((resolve) => {",
-    "family": "coordination:tests/access_settings_test.ts"
-  },
-  {
-    "file": "tests/access_snapshot_test.ts",
-    "capability": "Promise.withResolvers",
-    "line": 112,
-    "source": "Promise.withResolvers",
-    "context": "const reached = Promise.withResolvers<void>(),",
-    "family": "coordination:tests/access_snapshot_test.ts"
-  },
-  {
-    "file": "tests/access_snapshot_test.ts",
-    "capability": "Promise.withResolvers",
-    "line": 113,
-    "source": "Promise.withResolvers",
-    "context": "release = Promise.withResolvers<void>();",
-    "family": "coordination:tests/access_snapshot_test.ts"
-  },
-  {
-    "file": "tests/access_snapshot_test.ts",
-    "capability": "Promise.withResolvers",
-    "line": 178,
-    "source": "Promise.withResolvers",
-    "context": "reached = Promise.withResolvers<void>(),",
-    "family": "coordination:tests/access_snapshot_test.ts"
-  },
-  {
-    "file": "tests/access_snapshot_test.ts",
-    "capability": "Promise.withResolvers",
-    "line": 179,
-    "source": "Promise.withResolvers",
-    "context": "release = Promise.withResolvers<void>();",
-    "family": "coordination:tests/access_snapshot_test.ts"
-  },
-  {
-    "file": "tests/access_snapshot_test.ts",
-    "capability": "Promise.withResolvers",
-    "line": 257,
-    "source": "Promise.withResolvers",
-    "context": "reached = Promise.withResolvers<void>(),",
-    "family": "coordination:tests/access_snapshot_test.ts"
-  },
-  {
-    "file": "tests/access_snapshot_test.ts",
-    "capability": "Promise.withResolvers",
-    "line": 258,
-    "source": "Promise.withResolvers",
-    "context": "release = Promise.withResolvers<void>();",
-    "family": "coordination:tests/access_snapshot_test.ts"
-  },
-  {
-    "file": "tests/access_snapshot_test.ts",
-    "capability": "Promise.withResolvers",
-    "line": 324,
-    "source": "Promise.withResolvers",
-    "context": "reached = Promise.withResolvers<void>(),",
-    "family": "coordination:tests/access_snapshot_test.ts"
-  },
-  {
-    "file": "tests/access_snapshot_test.ts",
-    "capability": "Promise.withResolvers",
-    "line": 325,
-    "source": "Promise.withResolvers",
-    "context": "release = Promise.withResolvers<void>();",
-    "family": "coordination:tests/access_snapshot_test.ts"
   },
   {
     "file": "tests/backup_fixture_order_test.ts",
@@ -926,62 +790,6 @@
     "source": "Promise.withResolvers",
     "context": "readonly heartbeat = Promise.withResolvers<void>();",
     "family": "coordination:tests/helpers/worker_liveness.ts"
-  },
-  {
-    "file": "tests/http_mutation_lease_test.ts",
-    "capability": "Promise.withResolvers",
-    "line": 43,
-    "source": "Promise.withResolvers",
-    "context": "const reached = Promise.withResolvers<void>();",
-    "family": "coordination:tests/http_mutation_lease_test.ts"
-  },
-  {
-    "file": "tests/http_mutation_lease_test.ts",
-    "capability": "Promise.withResolvers",
-    "line": 44,
-    "source": "Promise.withResolvers",
-    "context": "const release = Promise.withResolvers<void>();",
-    "family": "coordination:tests/http_mutation_lease_test.ts"
-  },
-  {
-    "file": "tests/http_mutation_lease_test.ts",
-    "capability": "Promise.race",
-    "line": 56,
-    "source": "Promise.race",
-    "context": "return await Promise.race([",
-    "family": "coordination:tests/http_mutation_lease_test.ts"
-  },
-  {
-    "file": "tests/http_mutation_lease_test.ts",
-    "capability": "Promise.*",
-    "line": 58,
-    "source": "Promise",
-    "context": "new Promise<never>((_, reject) => {",
-    "family": "coordination:tests/http_mutation_lease_test.ts"
-  },
-  {
-    "file": "tests/http_mutation_lease_test.ts",
-    "capability": "setTimeout.*",
-    "line": 59,
-    "source": "setTimeout",
-    "context": "timer = setTimeout(",
-    "family": "coordination:tests/http_mutation_lease_test.ts"
-  },
-  {
-    "file": "tests/http_mutation_lease_test.ts",
-    "capability": "Promise.*",
-    "line": 144,
-    "source": "Promise",
-    "context": "await new Promise((r) => setTimeout(r, 10));",
-    "family": "coordination:tests/http_mutation_lease_test.ts"
-  },
-  {
-    "file": "tests/http_mutation_lease_test.ts",
-    "capability": "setTimeout.*",
-    "line": 144,
-    "source": "setTimeout",
-    "context": "await new Promise((r) => setTimeout(r, 10));",
-    "family": "coordination:tests/http_mutation_lease_test.ts"
   },
   {
     "file": "tests/hub_changes_test.ts",
@@ -1462,14 +1270,6 @@
     "source": "Promise.withResolvers",
     "context": "marker = Promise.withResolvers<void>();",
     "family": "coordination:tests/ownership_scope_test.ts"
-  },
-  {
-    "file": "tests/plugin_api_test.ts",
-    "capability": "Promise.*",
-    "line": 459,
-    "source": "Promise",
-    "context": "const gate = new Promise<void>((resolve) => {",
-    "family": "coordination:tests/plugin_api_test.ts"
   },
   {
     "file": "tests/plugin_authority_test.ts",
@@ -3158,46 +2958,6 @@
     "source": "setTimeout",
     "context": "await new Promise((resolve) => setTimeout(resolve, stopMs));",
     "family": "coordination:tests/timing/plugin_stall_test.ts"
-  },
-  {
-    "file": "tests/timing/plugin_stream_expiry_test.ts",
-    "capability": "Promise.*",
-    "line": 73,
-    "source": "Promise",
-    "context": "await new Promise((resolve) =>",
-    "family": "coordination:tests/timing/plugin_stream_expiry_test.ts"
-  },
-  {
-    "file": "tests/timing/plugin_stream_expiry_test.ts",
-    "capability": "setTimeout.*",
-    "line": 74,
-    "source": "setTimeout",
-    "context": "setTimeout(resolve, Math.max(0, expiry * 1000 - Date.now() + 25))",
-    "family": "coordination:tests/timing/plugin_stream_expiry_test.ts"
-  },
-  {
-    "file": "tests/timing/plugin_stream_expiry_test.ts",
-    "capability": "Promise.race",
-    "line": 97,
-    "source": "Promise.race",
-    "context": "const closed = await Promise.race([",
-    "family": "coordination:tests/timing/plugin_stream_expiry_test.ts"
-  },
-  {
-    "file": "tests/timing/plugin_stream_expiry_test.ts",
-    "capability": "Promise.*",
-    "line": 99,
-    "source": "Promise",
-    "context": "new Promise<boolean>((resolve) => {",
-    "family": "coordination:tests/timing/plugin_stream_expiry_test.ts"
-  },
-  {
-    "file": "tests/timing/plugin_stream_expiry_test.ts",
-    "capability": "setTimeout.*",
-    "line": 100,
-    "source": "setTimeout",
-    "context": "timer = setTimeout(() => resolve(false), 500);",
-    "family": "coordination:tests/timing/plugin_stream_expiry_test.ts"
   },
   {
     "file": "tests/timing/product_settlement_stall_test.ts",

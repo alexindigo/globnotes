@@ -1,13 +1,11 @@
+import { signInNative, tokenExpression } from "./settings-access-native.mjs";
 // Feature-owned real Settings foundation consumers; shared native helpers stay unchanged.
 import { showSidebar } from './sidebar-navigation-native.mjs';
 import { nativeSession } from "./native-cdp-session.mjs";
-import { fileURLToPath } from "node:url";
 import { finalizeNativeCase } from "./native-case-finalization.mjs";
-import { awaitHealthy, bootServer, parseArguments } from "./harness-helpers.mjs";
-import { done, failed, pending, waitUntil, watchChild } from "../../../tests/helpers/wait.ts";
-import { applicationServer } from "./http-origin.mjs";
-import { metadataBase, metadataDirectory, nativeAccountScenario, nativeFixtureInput, publishNativeLegacyAuth } from "./config-fixture.mjs";
-import { testEnvironment } from "../../../tests/helpers/environment.ts";
+import { nativeFixtureAdmin, bootServer, parseArguments } from "./harness-helpers.mjs";
+import { done, failed, pending, waitUntil } from "../../../tests/helpers/wait.ts";
+import { metadataDirectory, nativeAccountScenario, nativeFixtureInput } from "./config-fixture.mjs";
 import { parse as parseToml } from "@std/toml";
 
 let options;
@@ -21,7 +19,8 @@ const artifacts = options.artifacts ?? await Deno.makeTempDir({ prefix: "setting
 if (options.artifacts) await Deno.mkdir(artifacts, { mode: 0o700 });
 const assert = (condition, message) => { if (!condition) throw new Error(message); };
 const outcomes = [];
-let session, server, vault, state, failure;
+const actor = { login: "native-admin", password: "native-admin-password" };
+let session, server, vault, state, adminHeaders, failure;
 let removeObserver;
 const writes = [];
 const held = new Set();
@@ -33,46 +32,7 @@ const permissionPath = "/_/api/plugin-host/foundation-guard/permissions";
 // Match the existing feature-owned plugin-permissions.mjs parent-launch pattern;
 // bootServer's general default and the production runtime remain unchanged.
 async function bootWarningServer(vault, state, logsDir, fixtureInput) {
-  const fixture = testEnvironment(fixtureInput);
-  const root = fileURLToPath(new URL("../../..", import.meta.url));
-  if (fixture.fixtureAuth) await publishNativeLegacyAuth(vault, state, root, fixture);
-  const { host, origin } = applicationServer();
-  const listener = Deno.listen({ hostname: host, port: 0 });
-  const port = listener.addr.port; listener.close();
-  const args = ["run", "--cached-only", "--frozen", `--config=${root}/deno.json`, "--unstable-worker-options", "--allow-net", "--allow-read", "--allow-write", "--allow-env", "--allow-import=jsr.io:443", `${root}/server/main.ts`];
-  const child = new Deno.Command(Deno.execPath(), { args, cwd: root, clearEnv: true, stdout: "piped", stderr: "piped", env: {
-    PATH: Deno.env.get("PATH") ?? "", HOME: Deno.env.get("HOME") ?? "", TMPDIR:Deno.env.get('TMPDIR'), NO_COLOR: "1", GLOBNOTES_GLOBNOTES_PATH: vault, GLOBNOTES__METADATA_PATH: metadataBase(vault, state), GLOBNOTES__SERVER_HOST: host, GLOBNOTES__SERVER_PORT: String(port),
-  } }).spawn();
-  const drains = ["stdout", "stderr"].map(async channel => {
-    const file = await Deno.open(`${logsDir}/server-${channel}.log`, { write: true, createNew: true });
-    try { for await (const bytes of child[channel]) { let offset = 0; while (offset < bytes.length) offset += await file.write(bytes.subarray(offset)); } }
-    finally { file.close(); }
-  });
-  let closed = false;
-  async function close() {
-    if (closed) return; closed = true;
-    try { child.kill("SIGTERM"); } catch { /* owned child already exited */ }
-    let timer;
-    const status = await Promise.race([child.status, new Promise(resolve => { timer = setTimeout(() => resolve(null), 5000); })]);
-    clearTimeout(timer);
-    if (!status) { try { child.kill("SIGKILL"); } catch { /* owned child already exited */ } await child.status; }
-    await Promise.all(drains);
-  }
-  const baseUrl = origin(port);
-  try {
-    await Deno.writeTextFile(`${logsDir}/parent.json`, JSON.stringify({ pid: child.pid, args, cwd: root, explicitImportParent: true }, null, 2), { createNew: true });
-    await awaitHealthy(baseUrl, { label: "Owned warning fixture health", child });
-    await waitUntil(async signal => {
-      const response = await fetch(`${baseUrl}/_/api/plugin-host`, { signal });
-      assert(response.ok, "Owned warning fixture catalog rejected");
-      const catalog = await response.json();
-      const fixture = catalog.plugins.find(plugin => plugin.id === "foundation-guard");
-      if (fixture?.status === "failed") return failed("Owned warning fixture activation failed", fixture);
-      if (fixture?.enabled && fixture.status === "ready" && catalog.plugins.every(plugin => !plugin.enabled || !plugin.runtime?.server || plugin.status === "ready")) return done();
-      return pending(catalog.plugins);
-    }, { label: "Owned warning fixture plugin readiness", intervalMs: 100, children: [watchChild(child)] });
-  } catch (error) { await close(); throw error; }
-  return { pid: child.pid, baseUrl, close, fixtureIdentity: fixture.fixtureIdentity };
+  return await bootServer(vault, state, { ...fixtureInput, logsDir, denoArgs: ["--allow-import=jsr.io:443"] });
 }
 async function record(name, detail) {
   const outcome = { name, ...detail };
@@ -109,6 +69,8 @@ async function enabledButton(label, scope) {
   await session.button(label, scope);
 }
 async function open() {
+  // Cancelling a child dialog can return to the already-open Settings owner.
+  if (await inspect("!!document.querySelector('[data-modal-top=true] #settings-modal-title')")) return;
   await showSidebar(session);
   await session.click('[aria-label="Settings"]');
   await session.poll("!!document.querySelector('#settings-modal-title')");
@@ -173,7 +135,7 @@ async function actions(scope, name) {
   return result;
 }
 async function invariant() {
-   assert(await inspect("document.querySelector('.cm-content')===window.__foundationEditor && document.querySelector('.cm-content')?.textContent.includes('Foundation unsaved note') && sessionStorage.getItem('token')===window.__foundationToken"), "Foundation interaction replaced editor/token or lost note draft");
+   assert(await inspect("document.querySelector('.cm-content')===window.__foundationEditor && document.querySelector('.cm-content')?.textContent.includes('Foundation unsaved note') && sessionStorage.getItem('globnotes:session:root')===window.__foundationToken"), "Foundation interaction replaced editor/token or lost note draft");
   assert(await Deno.readTextFile(`${vault}/NoteA.md`) === "Seed content.\n", "Foundation interaction wrote the unsaved note");
 }
 async function closeFixture(name) {
@@ -213,7 +175,7 @@ try {
   vault = await Deno.makeTempDir({ prefix: "settings-foundations-vault-" });
   state = await metadataDirectory({ prefix: "settings-foundations-state-" });
   await Deno.writeTextFile(`${vault}/NoteA.md`, "Seed content.\n");
-  const fixtureInput = await nativeFixtureInput(nativeAccountScenario(), { brand_name: "Foundation seed" });
+  const fixtureInput = await nativeFixtureInput(nativeAccountScenario({ account: actor, everybody: "edit" }));
   await Deno.writeTextFile(`${state}/config.toml`, '[brand]\nname="Foundation seed"\n');
   await Deno.mkdir(`${state}/plugins/foundation-guard`, { recursive: true });
   await Deno.writeTextFile(`${state}/plugins/foundation-guard/manifest.json`, JSON.stringify({
@@ -224,8 +186,11 @@ try {
   await Deno.writeTextFile(`${state}/plugins/foundation-guard/service.js`, "export function activate(ctx){ctx.hooks.on('pre-save',()=>({cancel:false}));ctx.commands.register({id:'request',label:'Request foundation consent',target:'server'},()=>ctx.permissions.requestAccess({kind:'network',hosts:true,reason:'Foundation broad-access warning consumer'}));}");
   await Deno.writeTextFile(`${state}/plugins/foundation-guard/browser.js`, "export function activate(){}");
   server = await bootWarningServer(vault, state, artifacts, fixtureInput);
+  ({ headers: adminHeaders } = await nativeFixtureAdmin(server));
   session = await nativeSession({ port: Number(Deno.env.get("CDP_PORT") ?? 9335) });
   await Deno.writeTextFile(`${artifacts}/ownership.json`, JSON.stringify({ vault, state, server: { pid: server.pid, baseUrl: server.baseUrl }, targetId: session.targetId, browserContextId: session.browserContextId }, null, 2), { createNew: true });
+  await session.goto(`${server.baseUrl}/NoteA`);
+  await signInNative(session, server, actor, { returnPath: "/NoteA" });
   removeObserver = session.page.onEvent(event => {
     if (event.method === "Network.requestWillBeSent" && !["GET", "HEAD"].includes(event.params.request.method)) writes.push({ path: new URL(event.params.request.url).pathname, method: event.params.request.method });
     if (event.method !== "Fetch.requestPaused") return;
@@ -239,14 +204,13 @@ try {
       holdBrand = false; heldBrand = paused; held.add(paused.requestId);
     } else session.send("Fetch.continueRequest", { requestId: paused.requestId }).catch(error => { failure ??= error; });
   });
-  await session.goto(`${server.baseUrl}/NoteA`);
   await session.poll("!!document.querySelector('.toast-viewer')");
   await session.button("Edit", ".content-column");
   await session.button("Source", ".content-column");
   await session.poll("!!document.querySelector('.cm-content[contenteditable=true]')");
   await session.click(".cm-content"); await session.type("Foundation unsaved note\n");
    await session.poll("document.querySelector('.cm-content')?.textContent.includes('Foundation unsaved note')");
-  await inspect("window.__foundationEditor=document.querySelector('.cm-content');window.__foundationToken=sessionStorage.getItem('token');true");
+  await inspect("window.__foundationEditor=document.querySelector('.cm-content');window.__foundationToken=sessionStorage.getItem('globnotes:session:root');true");
   await open();
    const themeIds = await session.read('[data-appearance-settings] [data-theme-id]', "(()=>{const ids=[...document.querySelectorAll('[data-theme-id]')].map(el=>el.dataset.themeId);return ids.filter(id=>id!=='system');})()");
   assert(themeIds.length === 15, `Expected 15 shipped explicit themes, got ${themeIds.length}`);
@@ -308,21 +272,18 @@ try {
       await session.button("Discard", '[data-modal-top="true"]');
       await session.poll("!!document.querySelector('[data-appearance-settings]')");
       await session.button("Access", '[aria-label="Settings pages"]');
-      await waitForAccessSummary(session); await session.button("Change access…");
-       await session.poll("!!document.querySelector('#setup-title') && document.querySelector('#setup-mode-password')?.disabled===false");
-      await session.click("#setup-mode-password");
-      const accessFocus = await tabTo("#setup-username"); focusAssertion(accessFocus);
-      await replace("#setup-username", "foundation-proposal");
-      await session.click("#setup-mode-none");
-      const toggleFocus = await tabTo("#setup-read-only-settings"); focusAssertion(toggleFocus);
-       const previous = await session.read('#setup-read-only-settings', "document.querySelector('#setup-read-only-settings').getAttribute('aria-checked')");
-      await session.key(" ", { code: "Space", windowsVirtualKeyCode: 32 });
-       await session.poll(`!!document.querySelector('#setup-read-only-settings') && document.querySelector('#setup-read-only-settings').getAttribute('aria-checked')!==${JSON.stringify(previous)}`);
-       const submit = await session.read('[aria-labelledby=setup-title] button[type=submit]', "(()=>{const b=document.querySelector('#setup-title').closest('[role=dialog]').querySelector('button[type=submit]'),s=getComputedStyle(b);return {type:b.type,disabled:b.disabled,opacity:parseFloat(s.opacity),padding:parseFloat(s.paddingTop),busy:b.getAttribute('aria-busy')};})()");
-      assert(submit.type === "submit" && submit.disabled && submit.opacity === 0.4 && submit.padding === 10, "Access CTA lost form ownership/disabled treatment");
+      await session.poll("!!document.querySelector('#access-everybody')"); await session.button("Create and add account");
+       await session.poll("!!document.querySelector('#access-login') && !document.querySelector('#access-login').disabled");
+      const accessFocus = await tabTo("#access-login"); focusAssertion(accessFocus);
+      await replace("#access-login", "foundation-proposal");
+      const toggleFocus = await tabTo("#access-add-level"); focusAssertion(toggleFocus);
+      await session.key('Home',{windowsVirtualKeyCode:36});await session.key('ArrowDown',{windowsVirtualKeyCode:40});await session.key('Enter',{windowsVirtualKeyCode:13});
+       await session.poll("document.querySelector('#access-add-level')?.value===JSON.stringify('edit')");
+       const submit = await session.read('[data-modal-top=true] button[type=submit]', "(()=>{const b=document.querySelector('[data-modal-top=true] button[type=submit]'),s=getComputedStyle(b);return {type:b.type,disabled:b.disabled,valid:b.form.checkValidity(),opacity:parseFloat(s.opacity),padding:parseFloat(s.paddingTop),busy:b.getAttribute('aria-busy')};})()");
+      assert(submit.type === "submit" && !submit.valid && submit.opacity === 1 && submit.padding === 10, "Create CTA lost form ownership/required-password validation");
       const accessScreenshot = await screenshot(`${name}-access`);
       await session.key("Escape", { windowsVirtualKeyCode: 27 });
-      await session.poll("!document.querySelector('#setup-title')");
+      await session.poll("!document.querySelector('#access-login')");
       await invariant();
       assert(writes.length === 0, "Cancel/Reset/departure/Access draft issued mutations");
       await open();
@@ -383,7 +344,7 @@ try {
   await master();
   await session.poll(`document.querySelector(${JSON.stringify(importRow)})?.textContent.includes('parent unavailable')`);
   const permissionView = async () => {
-    const response = await fetch(`${server.baseUrl}${permissionPath}`, { signal: AbortSignal.timeout(5000) });
+    const response = await fetch(`${server.baseUrl}${permissionPath}`, { headers: adminHeaders, signal: AbortSignal.timeout(5000) });
     assert(response.ok, "Authoritative permission view rejected"); return response.json();
   };
   const unavailable = await permissionView();
@@ -424,7 +385,7 @@ try {
   vault = await Deno.makeTempDir({ prefix: "settings-foundations-readonly-vault-" });
   state = await metadataDirectory({ prefix: "settings-foundations-readonly-state-" });
   await Deno.writeTextFile(`${vault}/NoteA.md`, "Seed content.\n");
-  const readonlyInput = await nativeFixtureInput(nativeAccountScenario({ settingsWritable: false }));
+  const readonlyInput = await nativeFixtureInput(nativeAccountScenario({ account: actor, everybody: "edit" }));
   await Deno.mkdir(`${state}/plugins/foundation-guard`, { recursive: true });
   await Deno.writeTextFile(`${state}/plugins/foundation-guard/manifest.json`, JSON.stringify({ id: "foundation-guard", name: "Foundation request warning", runtime: { server: "service.js" }, capabilities: { network: true, imports: false } }));
   await Deno.writeTextFile(`${state}/plugins/foundation-guard/service.js`, "export async function activate(ctx){await ctx.permissions.requestAccess({kind:'network',hosts:true,reason:'Foundation read-only broad-access warning consumer'});}");
@@ -436,25 +397,27 @@ try {
     if (event.method === "Network.requestWillBeSent" && !["GET", "HEAD"].includes(event.params.request.method)) readonlyWrites.push({ path: new URL(event.params.request.url).pathname, method: event.params.request.method });
   });
   await session.goto(`${server.baseUrl}/NoteA`);
-  await session.poll("!!document.querySelector('#permission-request-title')");
-  await session.button("Review later", '[data-modal-top="true"]');
-  await session.poll("!document.querySelector('#permission-request-title')");
+  await session.poll("!!document.querySelector('.toast-viewer')");
   await open();
-  for (const id of themeIds) {
-    await theme(id);
-    await session.button("Plugins", '[aria-label="Settings pages"]');
-    await expandPermissions();
-    assert(await inspect("(()=>{const panel=document.querySelector('[data-plugin-inventory-id=foundation-guard] [data-plugin-permission-panel]');return !!panel.querySelector('.setting-row-control .settings-text')&&!panel.querySelector('[role=switch],[disabled]');})()"), "Read-only permissions lost their value presentation or expose dead controls");
-    await enabledButton("Review request…", "[data-plugin-permission-panel]");
+  const visitor=session,admin=await nativeSession({port:Number(Deno.env.get('CDP_PORT')??9335)});
+
+  const ledger=await Deno.readTextFile(`${state}/plugin-network/foundation-guard.json`);
+  try{for (const id of themeIds) {
+    session=visitor;await theme(id);
+    assert(await inspect("!document.querySelector('#permission-request-title,[data-settings-nav-id=\"core:plugins\"],[data-settings-nav-id=\"plugin:foundation-guard\"]')"),'Public Edit gets no private permission disclosure or dead Admin controls');
+    const denied=await fetch(`${server.baseUrl}${permissionPath}`);assert(denied.status===403,'Public editor cannot read private permissions');await denied.body?.cancel();
+    const publicScreenshot=await screenshot(`request-hidden-${id}`);
+    session=admin;await session.send('Page.addScriptToEvaluateOnNewDocument',{source:`localStorage.setItem('globnotes-theme',${JSON.stringify(id)});`});
+    await session.goto(`${server.baseUrl}/NoteA`);
+    if (!await session.evaluate(tokenExpression())) await signInNative(session, server, actor, { returnPath: "/NoteA" });
     await session.poll("!!document.querySelector('#permission-request-title')");
-    const broad = await warningObservation("[data-permission-request-choices] .text-theme-warning", "text");
-    const readonly = await warningObservation('[data-modal-top="true"] section > p.text-theme-warning', "text");
-    assert(readonly.text === "Read-only session: permission decisions are unavailable.", "Read-only warning describes the wrong state");
-    assert(await inspect("(()=>{const inputs=[...document.querySelectorAll('[data-permission-request-choices] input')],decisions=[...document.querySelectorAll('[data-modal-top=true] button')].filter(el=>['Deny','Approve'].includes(el.textContent.trim()));return inputs.length===2 && inputs.every(el=>el.disabled) && decisions.length===2 && decisions.every(el=>el.disabled);})()"), "Read-only request permits a decision or is missing its controls");
-    await record(`request-warning-${id}`, { observations: [broad, readonly], mutations: readonlyWrites.length, screenshot: await screenshot(`request-warning-${id}`) });
-    await session.button("Review later", '[data-modal-top="true"]');
-    await session.poll("!document.querySelector('#permission-request-title')");
-  }
+    const broad=await warningObservation('[data-permission-request-choices] .text-theme-warning','text');
+    await replace('#permission-narrow-host','foundation-warning.invalid');
+    await session.button('Select narrow host','[data-modal-top=true]');
+    assert(await inspect("(()=>{const decisions=[...document.querySelectorAll('[data-modal-top=true] button')].filter(el=>['Deny','Approve'].includes(el.textContent.trim()));return decisions.length===2&&decisions.every(el=>!el.disabled);})()"),'Only the independent Admin receives live decision controls');
+    await record(`request-warning-${id}`,{observations:[broad],publicPermissionDisclosure:false,mutations:readonlyWrites.length,screenshots:[publicScreenshot,await screenshot(`request-warning-${id}`)]});
+    assert(await Deno.readTextFile(`${state}/plugin-network/foundation-guard.json`)===ledger,'Theme/request inspection cannot change permission ledger');
+  }}finally{session=visitor;await admin.close();}
   assert(readonlyWrites.length === 0 && session.errors.length === 0, "Read-only warning consumers issued writes/browser exceptions");
   assert(await Deno.readTextFile(`${vault}/NoteA.md`) === "Seed content.\n", "Read-only warning consumer changed note disk");
 } catch (error) { failure = error; console.error(`FAIL: ${error.message}`); }
@@ -476,4 +439,3 @@ finally {
 }
 if (failure) throw failure;
 console.log(`SETTINGS FOUNDATIONS OK (${outcomes.length} consumer outcomes)`);
-import { waitForAccessSummary } from './settings-access-native.mjs';

@@ -5,14 +5,13 @@ import { currentBase } from "./helpers/storage.ts";
 import { versionOf } from "../server/hub/merge.ts";
 import type { Base } from "../server/hub/gate.ts";
 import { assert, assertEquals, assertRejects } from "@std/assert";
-import { GlobalConfig } from "./helpers/config.ts";
+import { fixtureLifecycle, GlobalConfig } from "./helpers/config.ts";
 import { FileServing } from "../server/files/file_serving.ts";
 import { VaultHub } from "../server/hub/hub.ts";
 import { subscribeIndex } from "../server/hub/subscribers.ts";
 import { FileSystemNotes } from "../server/notes/file_system.ts";
 import { NoteOperations } from "../server/notes/operations.ts";
 import { PluginActions } from "../server/plugins/actions.ts";
-import { PluginLifecycle } from "../server/plugins/lifecycle.ts";
 import { createPluginManager } from "./helpers/plugin_manager.ts";
 import { PluginNetworkRequests } from "../server/plugins/network_requests.ts";
 import {
@@ -31,6 +30,7 @@ import type {
 } from "../server/plugins/contracts.ts";
 import { testEnvironment } from "./helpers/environment.ts";
 import { bootServer } from "./helpers/boot.ts";
+import { fixtureAdmin } from "./helpers/fixture_http.ts";
 import {
   done,
   failed,
@@ -111,7 +111,7 @@ async function bundle(
       testMetadata(fixture.statePath),
       testServices(env).index,
     ),
-    lifecycle = new PluginLifecycle(config);
+    lifecycle = fixtureLifecycle(config);
   const sources: RuntimeSource[] = [], facts: OperationFact[] = [];
   const rpc = servicePluginRpc({
     vaultPath: fixture.vault,
@@ -1164,6 +1164,7 @@ Deno.test("plugin authority: independent narrow observers receive only authorize
  * launch record. No permission repair. */
 async function launchBackgroundFixture(env: Record<string, unknown>) {
   const server = await bootServer(env);
+  const admin = await fixtureAdmin(server);
   console.log(JSON.stringify({
     fixtureLaunch: {
       pid: server.pid,
@@ -1180,19 +1181,25 @@ async function launchBackgroundFixture(env: Record<string, unknown>) {
     status: server.status,
     output: server.output,
     close: server.close,
+    admin,
   };
 }
 
 /** Admission through the shared readiness wait: a rejected catalog, a
  * failed, disabled or missing plugin and an exited child fail at once. */
 function waitBackgroundAdmission(
-  server: Awaited<ReturnType<typeof launchBackgroundFixture>>,
+  server: Omit<Awaited<ReturnType<typeof launchBackgroundFixture>>, "admin"> & {
+    admin?: Awaited<ReturnType<typeof fixtureAdmin>>;
+  },
   fetched: () => boolean,
 ) {
   return waitUntil(async (signal) => {
-    const response = await fetch(`${server.baseUrl}/_/api/plugin-host`, {
-      signal,
-    });
+    const response = await (server.admin?.fetch ?? fetch)(
+      `${server.baseUrl}/_/api/plugin-host`,
+      {
+        signal,
+      },
+    );
     if (!response.ok) {
       await response.body?.cancel();
       throw Error(`Background fixture catalog rejected: ${response.status}`);

@@ -1,6 +1,6 @@
 <!-- SPDX-License-Identifier: LGPL-3.0-only -->
 <template>
-  <SettingsField :id="id" class="access-level-field" :field="{ key: id, label, description: help, type: 'select', options }" :value="value" :readonly="readonly" @edit="$emit('change', $event.raw)" />
+  <SettingsField :id="id" class="access-level-field" :field="{ key: id, label, description: help, type: 'select', options }" :value="value" :readonly="readonly" retain-control @edit="$emit('change', $event.raw)" />
 </template>
 <script setup>
 import SettingsField from '../SettingsField.vue';

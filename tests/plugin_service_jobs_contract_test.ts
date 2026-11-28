@@ -13,7 +13,7 @@ import { readManifest } from "../server/plugins/manifest.ts";
 import { pluginFixture } from "./helpers/plugin_fixture.ts";
 import { processClock } from "../server/observed_time.ts";
 import type { PluginLimits } from "../server/plugins/contracts.ts";
-import { AuthType } from "./helpers/config.ts";
+import { fixtureServiceEligibility } from "./helpers/config.ts";
 import { driverFixture } from "./helpers/driver_fixture.ts";
 
 const encoder = new TextEncoder();
@@ -203,8 +203,10 @@ function generic(
   code: string,
   fault?: RpcFault,
   limits?: Partial<PluginLimits>,
+  writable?: () => boolean,
 ) {
   return pluginOperationsFixture({
+    serviceEligibility: fixtureServiceEligibility({ writable }),
     id: "jobs",
     manifest: {
       runtime: { server: "service.js" },
@@ -914,6 +916,7 @@ for (
   Deno.test(`service jobs: held real filesystem effect cannot borrow ${change} authority`, async () => {
     const held = Promise.withResolvers<void>(),
       release = Promise.withResolvers<void>();
+    let writable = true;
     const b = await generic(
       `ctx.jobs.afterActivation({id:'one'},()=>ctx.fs.writeFile('late.bin',new Uint8Array([65]),{expect:{kind:'absent'}}));`,
       async (method, args, at) => {
@@ -924,6 +927,8 @@ for (
           await release.promise;
         }
       },
+      undefined,
+      () => writable,
     );
     try {
       await jobBoundary(b, held.promise, `${change} write entered`);
@@ -932,7 +937,7 @@ for (
       if (change === "source") {
         await Deno.writeTextFile(`${b.dir}/extra.js`, "changed");
       }
-      if (change === "read-only") b.config.authType = AuthType.READ_ONLY;
+      if (change === "read-only") writable = false;
       if (change === "suspend") b.runtime.suspend();
       if (change === "shutdown") await b.runtime.close();
       release.resolve();

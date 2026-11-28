@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-only
+import { openFixtureIdentity } from "./helpers/identity_fixture.ts";
+import { signIn } from "./helpers/session_delivery.ts";
 import { publicScenario } from "./helpers/fixture_scenarios.ts";
 import {
   assert,
@@ -7,7 +9,7 @@ import {
   assertStrictEquals,
 } from "@std/assert";
 import type { PathfinderRequest } from "@pathfinder/pathfinder";
-import { GlobalConfig } from "./helpers/config.ts";
+import { fixtureLifecycle, GlobalConfig } from "./helpers/config.ts";
 import {
   type JsonValues,
   PluginContractError,
@@ -16,7 +18,6 @@ import {
   PluginDataStore,
   type SettingsCommitChange,
 } from "../server/plugins/data.ts";
-import { PluginLifecycle } from "../server/plugins/lifecycle.ts";
 import { createPluginManager } from "./helpers/plugin_manager.ts";
 import { readManifest } from "../server/plugins/manifest.ts";
 import { validateSettingsPages } from "../server/plugins/settings.ts";
@@ -61,7 +62,7 @@ async function prepareBundle(
     (await fixture.admit(effect)).value;
   const previous = {
     config: state.config,
-    auth: state.auth,
+    identity: state.identity,
     lifecycle: state.lifecycle,
     plugins: state.plugins,
     pluginData: state.pluginData,
@@ -69,11 +70,12 @@ async function prepareBundle(
   const config = new GlobalConfig(
       testEnvironment({
         GLOBNOTES_GLOBNOTES_PATH: fixture.vault,
+        GLOBNOTES__METADATA_PATH: fixture.metadataBase,
         fixtureStatePath: fixture.statePath,
         fixtureScenario: publicScenario(),
       }),
     ),
-    lifecycle = new PluginLifecycle(config);
+    lifecycle = fixtureLifecycle(config);
   const commit = <T>(effect: () => Promise<T>) => lifecycle.gate.run(effect);
   const oldPage = validateSettingsPages([descriptor(100)])[0];
   const dir = await fixture.install("coherent", {
@@ -113,10 +115,24 @@ async function prepareBundle(
     settingsSchema: (_id: string) => readManifest(dir).settings,
   };
   const data = new PluginDataStore(fixture.statePath, adapters);
+  const identity = await openFixtureIdentity(
+    scope,
+    config,
+    publicScenario().identity,
+    () => manager,
+  );
+  const session = await signIn(identity.sessions, {
+    username: "alice",
+    password: "password",
+  });
+  const headers = {
+    "content-type": "application/json",
+    authorization: `Bearer ${session.access_token}`,
+  };
   scope.defer(() => Object.assign(state, previous));
   Object.assign(state, {
     config,
-    auth: null,
+    identity,
     lifecycle,
     plugins: manager,
     pluginData: data,
@@ -128,6 +144,7 @@ async function prepareBundle(
     before = await Deno.readTextFile(file);
   return {
     admit,
+    headers,
     signal: scope.signal,
     fixture,
     dir,
@@ -164,7 +181,7 @@ for (const variant of ["constraint", "field", "page"] as const) {
         "http://fixture/_/api/plugin-host/coherent/settings/preferences",
         {
           method: "PUT",
-          headers: { "content-type": "application/json" },
+          headers: b.headers,
           body: JSON.stringify({ values: { limit: 50 }, revision: 1 }),
         },
       );
@@ -179,9 +196,9 @@ for (const variant of ["constraint", "field", "page"] as const) {
             _raw: raw,
             params: { id: "coherent", page: "preferences" },
             body: {
-              json: async () => {
+              text: async () => {
                 await hold();
-                return raw.json();
+                return raw.text();
               },
             },
           } as unknown as PathfinderRequest,
@@ -392,7 +409,7 @@ for (const phase of ["before", "after", "missing"] as const) {
         "http://fixture/_/api/plugin-host/coherent/settings/preferences",
         {
           method: "PUT",
-          headers: { "content-type": "application/json" },
+          headers: b.headers,
           body: JSON.stringify({ values: { limit: 8 }, revision: 1 }),
         },
       );
@@ -408,13 +425,13 @@ for (const phase of ["before", "after", "missing"] as const) {
               _raw: raw,
               params: { id: "coherent", page: "preferences" },
               body: {
-                json: async () => {
+                text: async () => {
                   if (phase === "before") throw cause;
                   if (phase === "after") {
                     await hold();
                     throw cause;
                   }
-                  return await raw.json();
+                  return await raw.text();
                 },
               },
             } as unknown as PathfinderRequest), async (operation) => {

@@ -3,6 +3,7 @@ import { assert, assertEquals } from "@std/assert";
 import { storageServerFixture } from "./helpers/driver_fixture.ts";
 import { memoryRemote } from "./helpers/memory_remote.ts";
 import { catalogPluginReady } from "./helpers/plugin_ready.ts";
+import { fixtureAdmin } from "./helpers/fixture_http.ts";
 import { done, pending, waitUntil } from "./helpers/wait.ts";
 import { versionOf } from "../server/hub/merge.ts";
 
@@ -52,7 +53,11 @@ Deno.test("log example acceptance: real server Worker persists all four origins,
       revision: catalog.policy.revision,
       signature: catalog.policy.signature,
     });
-    if (value) await catalogPluginReady(f.server(), id);
+    if (value) {
+      await catalogPluginReady(f.server(), id, {
+        headers: (await fixtureAdmin(f.server())).headers,
+      });
+    }
   };
   try {
     await f.install(
@@ -209,7 +214,9 @@ Deno.test("log example acceptance: real server Worker persists all four origins,
     );
     assertEquals(state.resets, resets);
     await f.restart();
-    await catalogPluginReady(f.server(), id);
+    await catalogPluginReady(f.server(), id, {
+      headers: (await fixtureAdmin(f.server())).headers,
+    });
     await f.call("notes", "POST", {
       path: "after-restart",
       content: "durable resume",

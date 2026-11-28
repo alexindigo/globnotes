@@ -30,6 +30,7 @@
       <RouterLink v-if="showNewButton" :to="newTarget">
         <CustomButton :iconPath="tabEdit" title="New note" />
       </RouterLink>
+      <CustomButton v-if="app && globalStore.config.principal?.kind === 'guest'" label="Sign in" @click="app.openSignIn" />
     </div>
   </nav>
 
@@ -49,8 +50,10 @@ import ConflictBadge from "../components/ConflictBadge.vue";
 import { CONFLICT_INBOX } from "../conflictInbox.js";
 import SyncStatus from "../components/SyncStatus.vue";
 import { SYNC_STATUS } from "../syncStatusController.js";
+import { IDENTITY_APPLICATION } from "../identityApplication.js";
 
 const globalStore = useGlobalStore();
+const app = inject(IDENTITY_APPLICATION, null);
 const conflictInbox = inject(CONFLICT_INBOX, null);
 const syncStatus = inject(SYNC_STATUS,null);
 const openSyncSettings = () => emit("openSyncSettings");
@@ -80,6 +83,6 @@ function openSearch() {
   emit("toggleQuickSwitcher");
 }
 
-const showNewButton = computed(() => canCreateNote(globalStore.config.authType));
+const showNewButton = computed(() => canCreateNote(globalStore.config));
 
 </script>

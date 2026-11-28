@@ -1,9 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { identitySessionKey } from "../../shared/identity_session.ts";
+import { accountProjection } from "./helpers/account-projection.js";
 
-const adapters = vi.hoisted(() => ({ read: vi.fn(), events: vi.fn(), remove: vi.fn() }));
-vi.mock("../api.js", () => ({ getPluginHostCatalog: adapters.read, openPluginHostEvents: adapters.events }));
-vi.mock("../commands.js", () => ({ removeCommandOwner: adapters.remove }));
-vi.mock("../pluginSdk.js", () => ({ createPluginSdk: vi.fn(() => ({})) }));
+const adapters = { read: vi.fn(), events: vi.fn() };
 
 const catalog = revision => ({ contractVersion: 1, policy: { revision, signature: `policy-${revision}`, effectiveAutoEnable: true }, plugins: [] });
 const deferred = () => {
@@ -12,7 +11,7 @@ const deferred = () => {
   return { promise, resolve, reject };
 };
 const flush = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); };
-let runtime, listeners;
+let runtime, listeners, session, unbind;
 beforeEach(async () => {
   vi.resetModules(); vi.clearAllMocks(); listeners = [];
   const add = window.addEventListener.bind(window);
@@ -22,9 +21,14 @@ beforeEach(async () => {
   });
   adapters.read.mockResolvedValue(catalog(0)); adapters.events.mockResolvedValue(vi.fn());
   runtime = await import("../pluginRuntime.js");
+  const { connectionLifetime } = await import("../connectionLifetime.js");
+  session = identitySessionKey(accountProjection());
+  unbind = runtime.bindPluginRuntime(runtime.createIdentityPluginRuntime({ sessionKey: () => session,
+    lifetime: connectionLifetime, readCatalog: adapters.read, openEvents: adapters.events }));
 });
 afterEach(() => {
   runtime.stopPluginRuntime();
+  unbind();
   for (const listener of listeners) window.removeEventListener(listener.name, listener.callback, listener.options);
   vi.restoreAllMocks(); vi.useRealTimers();
 });
@@ -48,7 +52,11 @@ describe("review repairs: R17 catalogue publication ownership", () => {
     const a = deferred(); adapters.read.mockReturnValueOnce(a.promise);
     const stale = runtime.refreshPluginRuntimeCatalog();
     adapters.read.mockResolvedValueOnce(catalog(3));
-    if (ending === "session") { runtime.stopPluginRuntime(); await runtime.startPluginRuntime(); }
+    if (ending === "session") {
+      runtime.stopPluginRuntime();
+      session = identitySessionKey(accountProjection({ login: "sam" }));
+      await runtime.startPluginRuntime(session);
+    }
     else { window.dispatchEvent(new Event("pagehide")); window.dispatchEvent(new Event("pageshow")); await flush(); }
     expect(runtime.pluginCatalog.value.policy.revision).toBe(3);
     expect(originalClose).toHaveBeenCalledTimes(1);
@@ -103,10 +111,11 @@ describe("review repairs: R17 shared publisher receipts and policy floor", () =>
   });
 
   it("an old session write acknowledgement cannot raise the replacement session floor", async () => {
-    await runtime.startPluginRuntime("session-A");
+    await runtime.startPluginRuntime(session);
     const owner = runtime.capturePluginCatalogOwnership();
     runtime.stopPluginRuntime(); adapters.read.mockResolvedValueOnce(catalog(1));
-    await runtime.startPluginRuntime("session-B");
+    session = identitySessionKey(accountProjection({ login: "sam" }));
+    await runtime.startPluginRuntime(session);
     expect(runtime.acknowledgePluginPolicy({ revision: 800, signature: "old-A" }, owner)).toBe(false);
     adapters.read.mockResolvedValueOnce(catalog(2));
     expect((await runtime.refreshPluginRuntimeCatalog()).status).toBe("accepted");

@@ -10,6 +10,7 @@ import {
 } from "./helpers/driver_fixture.ts";
 import { memoryRemote } from "./helpers/memory_remote.ts";
 import { done, pending, waitUntil } from "./helpers/wait.ts";
+import { fixtureAdmin } from "./helpers/fixture_http.ts";
 
 async function shutdownWithLiveStream(
   options: Parameters<typeof bootServer>[1] = {},
@@ -79,13 +80,17 @@ Deno.test("driver API: real HTTP CRUD and keys are write-only, revision-bound an
     GLOBNOTES__METADATA_PATH: f.metadataBase,
     fixtureScenario: publicScenario(),
   });
+  const admin = await fixtureAdmin(server);
   const packets: string[] = [];
   async function call(method: string, route = "", body?: unknown) {
-    const response = await fetch(`${server.baseUrl}/_/api/drivers${route}`, {
-      method,
-      headers: { "content-type": "application/json" },
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
+    const response = await admin.fetch(
+      `${server.baseUrl}/_/api/drivers${route}`,
+      {
+        method,
+        headers: { "content-type": "application/json" },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      },
+    );
     const text = await response.text();
     packets.push(text);
     if (response.ok) {
@@ -187,7 +192,7 @@ Deno.test("driver API: real HTTP CRUD and keys are write-only, revision-bound an
       })).status,
       409,
     );
-    const getKey = await fetch(
+    const getKey = await admin.fetch(
       `${server.baseUrl}/_/api/drivers/${id}/secrets/token`,
     );
     packets.push(await getKey.text());
@@ -248,7 +253,7 @@ Deno.test("driver API: changed held observations still reject the reviewed decis
     const reviewed = await f.sync(id);
     assertEquals(reviewed.attention.held, [{ path: "A.md" }]);
     remote.put("A.md", "changed after review");
-    const response = await fetch(
+    const response = await (await fixtureAdmin(f.server())).fetch(
       `${f.server().baseUrl}/_/api/drivers/${id}/decisions`,
       {
         method: "POST",
@@ -290,8 +295,12 @@ for (const settings of ["true", "false"]) {
     });
     try {
       const read = await fetch(`${server.baseUrl}/_/api/drivers`);
-      assertEquals(read.status, 200);
+      assertEquals(read.status, 403);
       await read.body?.cancel();
+      const admin = await fixtureAdmin(server);
+      const inventory = await admin.fetch(`${server.baseUrl}/_/api/drivers`);
+      assertEquals(inventory.status, 200);
+      await inventory.body?.cancel();
       for (
         const [method, route, body] of [
           ["POST", "", { plugin: "test-driver", label: "denied" }],

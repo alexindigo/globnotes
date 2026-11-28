@@ -50,7 +50,7 @@ function context(root: string, scope: FixtureScope) {
   );
   const env = { GLOBNOTES_CONFIG: config };
   const paths = identityPaths({ env });
-  const start = async (args: string[]) =>
+  const start = async (args: string[], preload?: string) =>
     (await spawnOwnedChild(scope, DENO, {
       args: [
         "run",
@@ -58,6 +58,7 @@ function context(root: string, scope: FixtureScope) {
         "--allow-write",
         "--allow-env",
         "--allow-net",
+        ...(preload ? ["--preload", preload] : []),
         fromFileUrl(new URL("../server/auth/cli.ts", import.meta.url)),
         ...args,
       ],
@@ -480,19 +481,46 @@ Deno.test("identity CLI: live ownership refuses immediately without queueing and
 
 Deno.test("identity CLI: actual stdin interruption releases ownership without creating an account", () =>
   identityFixture(async (root, scope) => {
-    const f = context(root, scope), child = await f.start(create);
+    const f = context(root, scope);
+    const preload = `${root}/stdin-observer.mjs`, ready = `${root}/stdin-ready`;
+    // Observe admission at the real reader instead of taking the same
+    // exclusive lock the fail-fast CLI must acquire to get there.
+    await Deno.writeTextFile(
+      preload,
+      `
+      const input = Deno.stdin;
+      const readable = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(input), "readable").get;
+      Object.defineProperty(input, "readable", { get() {
+        const stream = readable.call(this);
+        Deno.writeTextFileSync(${JSON.stringify(ready)}, "admitted");
+        return stream;
+      } });
+    `,
+    );
+    const child = await f.start(create, preload);
     const stdout = new Response(child.stdout).text(),
       stderr = new Response(child.stderr).text();
-    await waitUntil(() => {
+    await waitUntil(async () => {
+      const status = child.status();
+      if (status) {
+        throw new Error(
+          `CLI exited before reading stdin (${status.code}): ${await stderr}`,
+        );
+      }
       try {
-        const owner = recoveryForRoot(f.paths.instance);
-        owner.close();
-        return pending({ waiting: "CLI lock" });
+        Deno.statSync(ready);
+        return done();
       } catch (error) {
-        if (error instanceof IdentityOwnershipError) return done();
+        if (error instanceof Deno.errors.NotFound) {
+          return pending({ waiting: "CLI stdin reader" });
+        }
         throw error;
       }
     }, { label: "CLI owns stdin admission" });
+    assertThrows(
+      () => recoveryForRoot(f.paths.instance),
+      IdentityOwnershipError,
+    );
     child.signal("SIGTERM");
     const status = await child.exited;
     assertEquals([status.code, status.success, await stdout, await stderr], [
@@ -555,7 +583,7 @@ Deno.test("identity CLI: recognized unimported legacy state and unknown vault ar
       code: 1,
       success: false,
       stdout: "",
-      stderr: refusal,
+      stderr: "Account migration required; public setup is unavailable.\n",
     });
     assertEquals(
       await f.cli([

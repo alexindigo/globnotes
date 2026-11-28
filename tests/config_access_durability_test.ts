@@ -1,107 +1,108 @@
 // SPDX-License-Identifier: LGPL-3.0-only
-import { assert, assertEquals } from "@std/assert";
-import { GlobalConfig } from "./helpers/config.ts";
-import { testEnvironment } from "./helpers/environment.ts";
-import { publicScenario, storedScenario } from "./helpers/fixture_scenarios.ts";
-import { accessView, updateAccess } from "../server/auth/access.ts";
-import status from "../server/api/endpoints/_/api/config/get.ts";
-import { PluginLifecycle } from "../server/plugins/lifecycle.ts";
-import { state } from "../server/state.ts";
+import { assertEquals, assertFalse } from "@std/assert";
+import type { PathfinderRequest } from "@pathfinder/pathfinder";
+import { accountRouteFixture } from "./helpers/account_route_fixture.ts";
+import access from "../server/api/endpoints/_/api/access/put.ts";
+import configGet from "../server/api/endpoints/_/api/config/get.ts";
 import { logger } from "../server/logger.ts";
+import { createUuid } from "../shared/uuid.ts";
 
-Deno.test("config durability warning: published access policy reaches runtime and config status", async () => {
-  const root = Deno.realPathSync(
-    await Deno.makeTempDir({ prefix: "access-durability-" }),
-  );
-  const previous = { ...state },
-    open = Deno.openSync,
-    rename = Deno.renameSync,
-    warning = logger.warning;
-  let published = false, warned = false;
-  let diagnostic = "";
-  let suspended = 0, stopped = 0, reconciled = 0;
-  try {
-    Deno.mkdirSync(`${root}/.globnotes`);
-    Deno.writeTextFileSync(
-      `${root}/.globnotes/config.json`,
-      JSON.stringify({ auth_type: "none", access_revision: 0 }),
-    );
-    const config = new GlobalConfig(
-      testEnvironment({
-        GLOBNOTES_GLOBNOTES_PATH: root,
-        fixtureScenario: storedScenario(publicScenario()),
-      }),
-    );
-    state.config = config;
-    state.auth = null;
-    state.plugins = {
-      runtime: {
-        suspend() {
-          suspended++;
-        },
-        reconcile() {
-          reconciled++;
-        },
-      },
-      stop() {
-        stopped++;
-      },
-    } as unknown as NonNullable<typeof state.plugins>;
-    state.lifecycle = new PluginLifecycle(config);
-    const before = await accessView();
-    Deno.renameSync = (from, to) => {
-      rename(from, to);
-      published = true;
-    };
-    Deno.openSync = ((file, options) => {
-      const handle = open(file, options), sync = handle.syncSync.bind(handle);
-      handle.syncSync = () => {
-        if (
-          published && String(file) === `${root}/.globnotes` &&
-          handle.statSync().isDirectory
-        ) throw new Error("private fixture payload must not leak");
-        sync();
+Deno.test("access durability: committed ACL reaches readers and projects a redacted warning", () =>
+  accountRouteFixture(async ({ config, identity, lifecycle, alice }) => {
+    const auth = { authorization: `Bearer ${(await alice()).access_token}` };
+    const { revision, signature, grants } = await identity.acl.view();
+    const events: string[] = [];
+    const unsubscribe = identity.composition.subscribe(() => {
+      events.push(identity.acl.capture().value.everybody);
+    });
+    const open = Deno.openSync,
+      rename = Deno.renameSync,
+      warning = logger.warning;
+    const warnings: unknown[][] = [];
+    let published = false;
+    const updateId = createUuid(), epoch = lifecycle.epoch;
+    try {
+      Deno.renameSync = (from, to) => {
+        rename(from, to);
+        if (String(to) === `${config.statePath}/access.json`) published = true;
       };
-      return handle;
-    }) as typeof open;
-    logger.warning = (...args) => {
-      warned = true;
-      diagnostic = JSON.stringify(args);
-    };
-    await updateAccess(
-      new Request("http://fixture/_/api/access", { method: "PUT" }),
-      {
-        mode: "read_only",
-        revision: before.revision,
-        signature: before.signature,
-      },
-    );
-    assert(published);
-    assert(warned);
-    assert(!diagnostic.includes(root));
-    assert(!diagnostic.includes("private fixture"));
+      Deno.openSync = (file, options) => {
+        const handle = open(file, options), sync = handle.syncSync.bind(handle);
+        handle.syncSync = () => {
+          if (
+            published && String(file) === config.statePath &&
+            handle.statSync().isDirectory
+          ) {
+            throw new Error("private fixture payload must not leak");
+          }
+          sync();
+        };
+        return handle;
+      };
+      logger.warning = (...args) => {
+        warnings.push(args);
+      };
+      const result = await access(
+        {
+          _raw: new Request("http://fixture/_/api/access", {
+            method: "PUT",
+            headers: auth,
+            body: JSON.stringify({
+              revision,
+              signature,
+              grants,
+              updateId,
+              everybody: "view",
+            }),
+          }),
+        } as PathfinderRequest,
+      );
+      assertEquals(result.status, 200);
+      assertEquals(await result.json(), {
+        updateId,
+        committed: true,
+        capabilities: {
+          canRead: true,
+          canEdit: true,
+          canManageVault: true,
+          canManageOwnAccount: true,
+          canCreateVault: true,
+        },
+      });
+    } finally {
+      Deno.openSync = open;
+      Deno.renameSync = rename;
+      logger.warning = warning;
+      unsubscribe();
+    }
+    assertEquals([published, events, lifecycle.epoch, lifecycle.writable()], [
+      true,
+      ["view"],
+      epoch,
+      true,
+    ]);
+    assertEquals(warnings.length, 1);
+    assertFalse(JSON.stringify(warnings).includes(config.statePath));
+    assertFalse(JSON.stringify(warnings).includes("private fixture"));
     const disk = JSON.parse(
-      Deno.readTextFileSync(`${root}/.globnotes/config.json`),
+      Deno.readTextFileSync(`${config.statePath}/access.json`),
     );
-    assertEquals(config.authType, disk.auth_type);
-    assertEquals(config.settingsWritable, false);
-    assertEquals(config.setupRequired, false);
-    assertEquals(state.auth, null);
-    assertEquals(state.lifecycle.epoch, 1);
-    assertEquals([suspended, stopped, reconciled], [1, 1, 1]);
-    const view = status();
-    const durability = view.storageDurability as {
-      warning: boolean;
-      warningCount: number;
-    };
-    assertEquals(durability.warning, true);
-    assert(durability.warningCount > 0);
-    assert(!JSON.stringify(durability).includes(root));
-  } finally {
-    Deno.openSync = open;
-    Deno.renameSync = rename;
-    logger.warning = warning;
-    Object.assign(state, previous);
-    Deno.removeSync(root, { recursive: true });
-  }
-});
+    assertEquals(disk, identity.acl.capture().value);
+    assertEquals([disk.everybody, disk.updateId], ["view", updateId]);
+    const view = await (await configGet(
+      {
+        _raw: new Request("http://fixture/_/api/config"),
+      } as PathfinderRequest,
+    )).json();
+    assertEquals([
+      view.setupRequired,
+      view.principal,
+      view.capabilities.canRead,
+      view.capabilities.canEdit,
+    ], [false, { kind: "guest" }, true, false]);
+    assertEquals(view.storageDurability.warning, true);
+    assertEquals(view.storageDurability.warningCount > 0, true);
+    assertFalse(
+      JSON.stringify(view.storageDurability).includes(config.statePath),
+    );
+  }));

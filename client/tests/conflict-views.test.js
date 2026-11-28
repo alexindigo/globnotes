@@ -11,6 +11,7 @@ import { CONFLICT_INBOX } from "../conflictInbox.js";
 import { getConflict, resolveConflict } from "../api.js";
 import { useGlobalStore } from "../globalStore.js";
 import { publish, TOPICS } from "../bus/index.js";
+import { accountProjection } from "./helpers/account-projection.js";
 vi.mock("../api.js", () => ({ getConflict: vi.fn(), getConflicts: vi.fn(), resolveConflict: vi.fn() }));
 vi.mock("../vaultChanges.js", () => ({ acquireVaultChanges: vi.fn() }));
 enableAutoUnmount(afterEach);
@@ -55,6 +56,7 @@ describe("conflict render wiring", () => {
     expect(wrapper.text()).toContain("Conflict not found."); expect(wrapper.findAll("[disabled]")).toHaveLength(0);
   });
   it("marks only invalidated actions pending while leaving explicit review usable", async () => {
+    useGlobalStore().config = accountProjection({ level: "edit" });
     const pair = { id: "a", revision: 1, state: "open", original: member("A.md"), copy: member("B.md") };
     getConflict.mockResolvedValue(pair);
     const r = router(); await r.push("/_/conflicts/a");
@@ -72,6 +74,7 @@ describe("conflict render wiring", () => {
     expect([content.attributes("aria-busy"), actions.findAll("button").map(b => b.text())]).toEqual(["false", ["Keep original", "Keep conflict copy", "Keep both", "Edit a merge", "Postpone"]]);
   });
   it("wires source input, destructive confirmation and guarded route cancellation through the controller", async () => {
+    useGlobalStore().config = accountProjection({ level: "edit" });
     const pair = { id: "a", revision: 1, state: "open", original: member("A.md"), copy: member("B.md") };
     getConflict.mockResolvedValue(pair);
     const r = router(); await r.push("/_/conflicts/a"); const resolved = vi.fn();
@@ -91,7 +94,7 @@ describe("conflict render wiring", () => {
     expect(wrapper.findAll('[disabled]')).toHaveLength(0);
   });
   it("read-only comparison exposes no keep or merge controls", async () => {
-    useGlobalStore().config = { authType: "read_only" };
+    useGlobalStore().config = accountProjection({ guest: true, level: "view" });
     getConflict.mockResolvedValue({ id: "a", revision: 1, state: "open", original: member("A.md"), copy: member("B.md") });
     const r = router(); await r.push("/_/conflicts/a"); const wrapper = routed(r, { state: {}, acquire: () => () => {} }); await flushPromises();
     expect(wrapper.findAll('.conflicts-page__actions button').map(b => b.text())).toEqual(["Postpone"]);

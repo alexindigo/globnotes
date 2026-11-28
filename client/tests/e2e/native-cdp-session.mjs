@@ -140,7 +140,7 @@ export async function nativeSession({ port = 9333, width = 1280, height = 900, d
   const pointer = { evaluate, poll, async click(_selector, _point, locate) {
     await dispatchNativeClick({ evaluate, poll, onEvent: page.onEvent }, (method, params) => page.send(method, params), locate);
   } };
-  const click = selector => clickReady(pointer, selector);
+  const click = (selector, options) => clickReady(pointer, selector, options);
   return { ...owned, browser, errors, events, version, evaluate, poll, read, click, send: page.send,
     // Every application page load is checked before and after navigation: plain
     // HTTP on the local test domain, and an insecure context (AXIOMS §1).

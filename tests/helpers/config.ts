@@ -1,7 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-only
-/** Explicit private-record fixtures. No obsolete production env translation. */
-import { pbkdf2Sync } from "node:crypto";
-import { Buffer } from "node:buffer";
+/** Scoped defaults and deterministic password hashing for test accounts. */
 import { resolve } from "@std/path";
 import {
   GlobalConfig as ProductionConfig,
@@ -19,23 +17,31 @@ import {
 import { VaultConfigStore } from "../../server/config/vault.ts";
 import { type FixtureEnvironment, testEnvironment } from "./environment.ts";
 import type { IdentityFixturePayload } from "./identity_fixture.ts";
+import {
+  PluginLifecycle,
+  type PluginServiceEligibility,
+} from "../../server/plugins/lifecycle.ts";
 export * from "../../server/config.ts";
+export { fixturePasswordHash } from "./fixture_password.ts";
+
+/** Explicit background availability in fixtures that do not boot accounts. */
+export function fixtureServiceEligibility(
+  { operational = () => true, writable = operational }: Partial<
+    PluginServiceEligibility
+  > = {},
+): PluginServiceEligibility {
+  return { operational, writable };
+}
+
+export function fixtureLifecycle(
+  config: ProductionConfig,
+  eligibility = fixtureServiceEligibility(),
+) {
+  return new PluginLifecycle(config, eligibility);
+}
 
 // Default-only constructor adapters use the one documented test seam.
 setConfigForTests({});
-const hashes = new Map<string, string>();
-export function fixturePasswordHash(password: string): string {
-  let hash = hashes.get(password);
-  if (!hash) {
-    const salt = "00112233445566778899aabbccddeeff";
-    hash = `pbkdf2_sha256$100000$${salt}$${
-      pbkdf2Sync(password, Buffer.from(salt, "hex"), 100000, 32, "sha256")
-        .toString("hex")
-    }`;
-    hashes.set(password, hash);
-  }
-  return hash;
-}
 export class GlobalConfig extends ProductionConfig {
   /** Available to the prepared account fixture; never a production config field. */
   readonly fixtureIdentity?: IdentityFixturePayload | null;
@@ -78,19 +84,6 @@ export class GlobalConfig extends ProductionConfig {
     const instance = loaded.config;
     const statePath = input.fixtureStatePath ||
       vaultMetadataPath(notesPath, instance.metadata.path, "globnotes");
-    if (input.fixtureAuth) {
-      Deno.mkdirSync(statePath, { recursive: true });
-      let saved = {};
-      try {
-        saved = JSON.parse(Deno.readTextFileSync(`${statePath}/config.json`));
-      } catch (error) {
-        if (!(error instanceof Deno.errors.NotFound)) throw error;
-      }
-      Deno.writeTextFileSync(
-        `${statePath}/config.json`,
-        JSON.stringify({ ...saved, ...input.fixtureAuth }),
-      );
-    }
     const vault = new VaultConfigStore(
       "globnotes",
       `${statePath}/config.toml`,

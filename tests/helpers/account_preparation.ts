@@ -15,7 +15,7 @@ import {
   SessionRepository,
 } from "../../server/auth/sessions.ts";
 import { identityFixture, UPDATE } from "./identity.ts";
-import { fixturePasswordHash } from "./config.ts";
+import { fixturePasswordHash } from "./fixture_password.ts";
 export const recoveryForRoot = (root: string) => acquireOfflineRecovery(root);
 /** Stage credentials through the supplied live fixture owner, without publishing. */
 export function prepareFixtureInitialAccount(

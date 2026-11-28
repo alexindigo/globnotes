@@ -526,6 +526,15 @@ export class PluginManager {
   enabledManifests(): PluginManifest[] {
     return this.orderedManifests();
   }
+  /** A settings page is not itself a reader contribution. Only an enabled
+   * browser component receives its own settings through the runtime view. */
+  browserOwner(id: string): { epoch: number; manifest: PluginManifest } | null {
+    const { epoch, enabled, manifest } = this.driverOwner(id);
+    return enabled && manifest &&
+        (manifest.hasClient || manifest.runtime.client)
+      ? { epoch, manifest }
+      : null;
+  }
   configureRuntime(
     adapters: Omit<RuntimeAdapters, "vaultPath" | "statePath">,
     limits: Partial<PluginLimits> = {},

@@ -2,7 +2,7 @@ import {syncCase,assert,until} from "./sync-native-fixture.mjs";
 await syncCase("sync-driver-native",async f=>{
   const s=f.session;
   await Deno.writeTextFile(`${f.vault}/Collision.md`,"local collision\n");f.remote.put("Collision.md","remote collision\n");f.remote.put("Live.md","first\n\nlast\n");
-  await s.goto(f.url("/"));await f.open();await f.add();await f.active();await f.close();
+  await f.signIn();await s.goto(f.url("/"));await f.open();await f.add();await f.active();await f.close();
   await s.poll("[...document.querySelectorAll('.content-column a')].some(a=>a.textContent.includes('Live') && a.getBoundingClientRect().width>0)");
   assert(await Deno.readTextFile(`${f.vault}/Live.md`)==="first\n\nlast\n","Imported note list did not correspond to disk");
   await s.click('.content-column a[href="/Live"]');await s.poll("document.querySelector('.toast-viewer')?.textContent.includes('first')");await s.button("Edit",".content-column");await s.button("Source",".content-column");

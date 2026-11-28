@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { isReadonly, nextTick, reactive } from "vue";
+import { accountProjection } from "./helpers/account-projection.js";
 import { createConflictInbox } from "../conflictInbox.js";
 import { TOPICS } from "../bus/index.js";
 vi.mock("../api.js", () => ({ getConflicts: vi.fn() }));
@@ -60,13 +61,13 @@ describe("shared conflict metadata owner", () => {
     old.resolve(response(row("old"))); await flush(); expect(f.inbox.state.rows.map(row => row.id)).toEqual(["new"]);
     f.inbox.dispose(); expect(f.inbox.state.rows).toEqual([]); expect(f.inbox.state.available).toBe(false);
   });
-  it("config readiness, login/setup and credentials gate App's lifetime", async () => {
-    const context = reactive({ ready: false, route: "note", config: { authType: "password" }, token: null });
+  it("config readiness, login/setup and capabilities gate App's lifetime", async () => {
+    const context = reactive({ ready: false, route: "note", config: accountProjection({ guest: true, level: "none" }) });
     const read = vi.fn(async () => response(row()));
-    const inbox = createConflictInbox({ read, token: () => context.token, subscribe: () => () => {}, acquireChanges: () => () => {} }); owners.push(inbox);
+    const inbox = createConflictInbox({ read, subscribe: () => () => {}, acquireChanges: () => () => {} }); owners.push(inbox);
     inbox.bindContext({ config: () => context.config, configReady: () => context.ready, routeName: () => context.route });
     context.ready = true; await nextTick(); expect(read).not.toHaveBeenCalled();
-    context.token = "credential"; await flush(); expect(read).toHaveBeenCalledTimes(1); expect(inbox.state.total).toBe(1);
+    context.config = accountProjection({ guest: true, level: "view" }); await flush(); expect(read).toHaveBeenCalledTimes(1); expect(inbox.state.total).toBe(1);
     context.route = "login"; expect(inbox.state.rows).toEqual([]); expect(inbox.state.available).toBe(false);
     context.route = "conflicts"; await flush(); expect(read).toHaveBeenCalledTimes(2);
     context.config.setupRequired = true; expect(inbox.state.available).toBe(false);

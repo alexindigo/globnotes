@@ -4,5 +4,6 @@ export {
   fixtureApiOrigin,
   fixturePage,
   pluginFixture,
+  preparePluginFixture,
   withPluginFixture,
 } from "./plugin_fixture_engine.ts";

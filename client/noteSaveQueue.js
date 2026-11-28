@@ -6,15 +6,8 @@ export const NOTE_SAVE_OBSERVATION_MS = 60_000;
 export function classifyNoteSaveFailure(error, phase) {
   if (phase === "sending" && error?.clientScopeRetired === true) return "known-unsent";
   if (phase === "preparing") return error?.cancelled ? "cancelled-unsent" : "known-unsent";
-  const response = error?.response;
-  const code = response?.data?.code;
-  if (["plugin_cancelled", "plugin_guard_failed", "operation_conflict"].includes(code)) return "known-no-write";
-  const detail = response?.data?.detail;
-  // These exact producers were inspected: middleware and operation admission,
-  // before any storage effect. Bare status codes convey no such certainty.
-  if ((response?.status === 401 && detail === "Invalid authentication credentials") ||
-      (response?.status === 403 && detail === "read-only mode") ||
-      (response?.status === 503 && detail === "setup_required")) return "known-no-write";
+  const code = error?.response?.data?.code;
+  if (["plugin_cancelled", "plugin_guard_failed", "operation_conflict", "credentials_refused", "operation_not_permitted", "setup_required", "mutation_authority_required"].includes(code)) return "known-no-write";
   return "unknown";
 }
 
@@ -75,7 +68,7 @@ export function createNoteSaveQueue(adapters) {
     // Preparation has not dispatched a write, regardless of the 401's body.
     // Once sent, only the inspected middleware rejection proves safe retry.
     const authenticationRequired = !job.timedOut && error?.response?.status === 401 &&
-      (phase === "preparing" || (phase === "sending" && error.response.data?.detail === "Invalid authentication credentials"));
+      (phase === "preparing" || (phase === "sending" && error.response.data?.code === "credentials_refused"));
     failure = { submissionId: job.snapshot.submissionId, certainty, phase, message: error?.message ?? String(error), serial: failureSerial, authenticationRequired };
     job.outcome = Object.freeze(committedResult
       ? { status: "acknowledged", result: committedResult, late: job.timedOut }
@@ -226,6 +219,12 @@ export function createNoteSaveQueue(adapters) {
     },
     state,
     baseContent: () => baseContent,
+    captureDeparture() {
+      // Admission follows workflow changes, not publication of a new view
+      // (e.g. removing a successfully drained job from the receipt roster).
+      return lifetime.capture().bind(() => serial, () => status, () => active, () => failure,
+        () => acknowledged, () => baseContent, () => rebaseConflict);
+    },
     admittedPath,
     /** Only an unsent preparation or inspected pre-write auth rejection can release this barrier.
      * The failed snapshot, FIFO position and acknowledged base are unchanged.

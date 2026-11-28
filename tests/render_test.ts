@@ -20,6 +20,7 @@ import { renderMarkdown } from "../server/render/pipeline.ts";
 import { initState } from "../server/state.ts";
 import { Fts5Indexer } from "../server/search/fts5.ts";
 import { bootServer } from "./helpers/boot.ts";
+import { fixtureAdmin } from "./helpers/fixture_http.ts";
 import { testEnvironment } from "./helpers/environment.ts";
 
 function setupState(vault: string, plugins: PluginManager | null): void {
@@ -319,10 +320,12 @@ Deno.test("render: endpoint end-to-end", async () => {
     assertEquals(missing.status, 404);
     await missing.body?.cancel();
 
-    // Settings endpoints: plugin list + disabled query param.
-    const plugins = await fetch(`${server.baseUrl}/_/api/plugins`);
+    // Reader contributions exclude Admin runtime and settings metadata.
+    const plugins = await fetch(`${server.baseUrl}/_/api/plugin-host`);
     assertEquals(plugins.status, 200);
-    const pluginIds = (await plugins.json()).map((p: { id: string }) => p.id);
+    const pluginIds = (await plugins.json()).plugins.map((p: { id: string }) =>
+      p.id
+    );
     assert(pluginIds.includes("globnotes-mark"));
 
     const noMark = await fetch(
@@ -331,8 +334,9 @@ Deno.test("render: endpoint end-to-end", async () => {
     assertEquals(noMark.status, 200);
     assert(!(await noMark.text()).includes("<mark>"));
 
-    const config = await fetch(`${server.baseUrl}/_/api/config`);
-    assertEquals((await config.json()).autoEnablePlugins, true);
+    const admin = await fixtureAdmin(server);
+    const catalog = await admin.fetch(`${server.baseUrl}/_/api/plugin-host`);
+    assertEquals((await catalog.json()).policy.effectiveAutoEnable, true);
   } finally {
     await server?.close();
     await Deno.remove(vault, { recursive: true });

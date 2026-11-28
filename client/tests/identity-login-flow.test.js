@@ -8,7 +8,7 @@ afterEach(async () => { for (const c of controllers.splice(0)) await c.dispose()
 const owned = c => { controllers.push(c); return c; };
 function session(request = async () => "token") {
   const accepted = { principal: { passwordChangeRequired: true }, current: () => true };
-  return { transport: { getToken: vi.fn(request) }, acceptToken: vi.fn(), acceptProjection: vi.fn(async () => accepted), accepted,
+  return { transport: { getToken: vi.fn(request) }, acceptToken: vi.fn(), signIn: vi.fn(async () => accepted), accepted,
     beforeSignIn: async () => true, capture: () => () => true, retainLoginProof: vi.fn() };
 }
 it("temporary sign-in hands off the exact just-proven password, then clears the form", async () => {
@@ -53,7 +53,7 @@ it("the actual session handoff is one-use and cannot survive replacement or reti
 });
 it("disposing a sign-in form during its refresh cannot navigate the replacement page", async () => {
   const entered = Promise.withResolvers(), refresh = Promise.withResolvers(), s = session();
-  s.acceptProjection = () => { entered.resolve(); return refresh.promise; };
+  s.signIn = () => { entered.resolve(); return refresh.promise; };
   const navigate = vi.fn(), c = owned(createIdentityLoginState({ session: s, navigate, toast: { add: vi.fn() } }));
   c.setField("username", "alice"); c.setField("password", "password"); const result = c.submit();
   await entered.promise; const retained = c.hasWork();
@@ -65,7 +65,7 @@ it("delivers only the sign-in projection accepted before the original refresh co
   const entered = Promise.withResolvers(), completion = Promise.withResolvers(), s = session();
   let live = true;
   const accepted = { ...s.accepted, current: () => live };
-  s.acceptProjection = async () => { entered.resolve(); await completion.promise; return accepted; };
+  s.signIn = async () => { entered.resolve(); await completion.promise; return accepted; };
   const navigate = vi.fn(), c = owned(createIdentityLoginFlow({ session: s, credentials: () => ({ username: "alice", password: "temporary" }), clearCredentials() {}, navigate }));
   const result = c.logIn(); await entered.promise;
   live = false; completion.resolve(); await result;

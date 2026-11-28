@@ -4,10 +4,12 @@ import { runCase } from "./legacy-fixture.mjs";
 import { bindAddress, httpOrigin } from "./http-origin.mjs";
 import { done, pending, waitUntil } from "../../../tests/helpers/wait.ts";
 import { assert } from "./test-outcomes.mjs";
+import { nativeFixtureAdmin } from "./harness-helpers.mjs";
 
 const paths = ["/_/api/changes", "/_/api/plugin-host/events"];
 const until = (predicate, label) => waitUntil(async () => await predicate() ? done() : pending({ label }), { label, intervalMs: 50 });
 await runCase("background-connections-native", async f => {
+  const { headers: admin } = await nativeFixtureAdmin(f.server);
   const live = new Map(paths.map(path => [path, 0])), admitted = new Map(paths.map(path => [path, 0])), history = [];
   const shutdown = new AbortController(), controllers = new Set();
   let background;
@@ -53,10 +55,10 @@ await runCase("background-connections-native", async f => {
     const missed = "Changed while this tab was hidden.\n";
     await Deno.writeTextFile(f.vault + "/readme.md", missed);
     const settingsPath = "plugin-host/globnotes-autosave-timer/settings/autosave";
-    const before = await f.api(settingsPath);
+    const before = await f.api(settingsPath, "GET", undefined, admin);
     assert(before.status === 200, "Autosave fixture settings missing");
     const settings = await f.api(settingsPath, "PUT", { revision: before.body.revision, sourceKey: before.body.sourceKey,
-      values: { ...before.body.values, enabled: true, mode: "pause", pauseSeconds: 1 } });
+      values: { ...before.body.values, enabled: true, mode: "pause", pauseSeconds: 1 } }, admin);
     assert(settings.status === 200, "Could not enable the existing browser plugin while hidden");
     assert(paths.every(path => live.get(path) === 0), "Hidden events reopened a stream");
     await f.session.browser.send("Target.activateTarget", { targetId: f.session.targetId });

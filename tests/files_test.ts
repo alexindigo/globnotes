@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-only
-import { publicScenario } from "./helpers/fixture_scenarios.ts";
+import {
+  publicScenario,
+  signedInScenario,
+} from "./helpers/fixture_scenarios.ts";
 
 /**
  * Integration tests for file serving, upload, and the root catch-all —
@@ -289,7 +292,9 @@ Deno.test("files: catch-all routing", async (t) => {
 
     await t.step("note page wins for dotted titles", async () => {
       await Deno.writeTextFile(path.join(server.vault, "v2.1.md"), "body");
-      const res = await fetch(`${server.baseUrl}/v2.1`);
+      const res = await fetch(`${server.baseUrl}/v2.1`, {
+        headers: { accept: "text/html" },
+      });
       assertEquals(res.status, 200);
       assertStringIncludes(await res.text(), "INDEX");
     });
@@ -315,7 +320,9 @@ Deno.test("files: catch-all routing", async (t) => {
       "unknown underscore root serves index (Python parity)",
       async () => {
         // Python: segments[0] != "_" → falls through to serve_index.
-        const res = await fetch(`${server.baseUrl}/_unknown`);
+        const res = await fetch(`${server.baseUrl}/_unknown`, {
+          headers: { accept: "text/html" },
+        });
         assertEquals(res.status, 200);
         assertStringIncludes(await res.text(), "INDEX");
       },
@@ -323,13 +330,17 @@ Deno.test("files: catch-all routing", async (t) => {
 
     await t.step(".md suffix is a note page, not a file download", async () => {
       await Deno.writeTextFile(path.join(server.vault, "page.md"), "# body");
-      const res = await fetch(`${server.baseUrl}/page.md`);
+      const res = await fetch(`${server.baseUrl}/page.md`, {
+        headers: { accept: "text/html" },
+      });
       assertEquals(res.status, 200);
       assertStringIncludes(await res.text(), "INDEX");
     });
 
     await t.step("missing note serves index (client 404s it)", async () => {
-      const res = await fetch(`${server.baseUrl}/no/such/note`);
+      const res = await fetch(`${server.baseUrl}/no/such/note`, {
+        headers: { accept: "text/html" },
+      });
       assertEquals(res.status, 200);
       assertStringIncludes(await res.text(), "INDEX");
     });
@@ -349,21 +360,16 @@ Deno.test("files: catch-all routing", async (t) => {
 Deno.test("files: catch-all requires auth for vault files", async () => {
   const { appDir, vault } = await makeApp();
   const server = await bootServer(
-    { GLOBNOTES_GLOBNOTES_PATH: vault },
+    {
+      GLOBNOTES_GLOBNOTES_PATH: vault,
+      fixtureScenario: signedInScenario({ login: "u", password: "p" }),
+    },
     { cwd: appDir },
   );
   try {
     await Deno.writeFile(path.join(vault, "img.png"), PNG);
-    // Complete setup so the server gates properly.
-    const setup = await fetch(`${server.baseUrl}/_/api/setup`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ mode: "password", username: "u", password: "p" }),
-    });
-    await setup.body?.cancel();
-
     const unauthed = await fetch(`${server.baseUrl}/img.png`);
-    assertEquals(unauthed.status, 401);
+    assertEquals(unauthed.status, 403);
     await unauthed.body?.cancel();
 
     const login = await fetch(`${server.baseUrl}/_/api/token`, {
@@ -380,7 +386,9 @@ Deno.test("files: catch-all requires auth for vault files", async () => {
     assertEquals(new Uint8Array(await authed.arrayBuffer()), PNG);
 
     // Note pages stay public (the client handles its own auth flow).
-    const page = await fetch(`${server.baseUrl}/some-note`);
+    const page = await fetch(`${server.baseUrl}/some-note`, {
+      headers: { accept: "text/html" },
+    });
     assertEquals(page.status, 200);
     assertStringIncludes(await page.text(), "INDEX");
   } finally {

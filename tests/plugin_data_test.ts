@@ -13,8 +13,11 @@ import {
 import { validateSettingsPages } from "../server/plugins/settings.ts";
 import { fixturePage, pluginFixture } from "./helpers/plugin_fixture.ts";
 import { createPluginManager } from "./helpers/plugin_manager.ts";
-import { AsyncLock, PluginLifecycle } from "../server/plugins/lifecycle.ts";
-import { GlobalConfig } from "./helpers/config.ts";
+import { AsyncLock } from "../server/plugins/lifecycle.ts";
+import { fixtureLifecycle, GlobalConfig } from "./helpers/config.ts";
+import { fixtureScope } from "./helpers/fixture_scope.ts";
+import { openFixtureIdentity } from "./helpers/identity_fixture.ts";
+import { signIn } from "./helpers/session_delivery.ts";
 import { state } from "../server/state.ts";
 import { testEnvironment } from "./helpers/environment.ts";
 import { command } from "./helpers/process.ts";
@@ -202,132 +205,147 @@ Deno.test("review repairs: R02 R08 committed settings recover only reduced roles
   }
 });
 
-Deno.test("review repairs: R02 publication failure reports persisted revision, fences old rights and restart synchronizes real settings", async () => {
-  const b = await settingsTransitionFixture();
-  const originalRename = Deno.renameSync;
-  const previousState = {
-    config: state.config,
-    auth: state.auth,
-    lifecycle: state.lifecycle,
-    plugins: state.plugins,
-    pluginData: state.pluginData,
-  };
-  try {
-    state.config = new GlobalConfig(
-      testEnvironment({
-        GLOBNOTES_GLOBNOTES_PATH: b.fixture.vault,
-        fixtureStatePath: b.fixture.statePath,
-        fixtureScenario: publicScenario(),
-      }),
-    );
-    state.auth = null;
-    state.lifecycle = new PluginLifecycle(state.config);
-    state.plugins = b.manager;
-    state.pluginData = b.store;
-    const oldService = b.runtime.status("transition")!.generation;
-    const ledgerFile = `${b.fixture.statePath}/plugin-network/transition.json`;
-    const oldLedger = Deno.readTextFileSync(ledgerFile);
-    // Fail only the actual ledger effect after the settings rename, once.
-    let failedLedger = false;
-    Deno.renameSync = (from, to) => {
-      if (String(to) === ledgerFile && !failedLedger) {
-        failedLedger = true;
-        throw Error("owned ledger publication failure");
-      }
-      originalRename(from, to);
+Deno.test("review repairs: R02 publication failure reports persisted revision, fences old rights and restart synchronizes real settings", () =>
+  fixtureScope(async (scope) => {
+    const b = await settingsTransitionFixture();
+    const originalRename = Deno.renameSync;
+    const previousState = {
+      config: state.config,
+      identity: state.identity,
+      lifecycle: state.lifecycle,
+      plugins: state.plugins,
+      pluginData: state.pluginData,
     };
-    const raw = new Request(
-      "http://fixture/_/api/plugin-host/transition/settings/preferences",
-      {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          revision: 0,
-          values: {
-            message: "persisted despite publication failure",
-            protect: false,
-            limit: 5,
-          },
-        }),
-      },
-    );
-    const response = await settingsPut({
-      _raw: raw,
-      params: { id: "transition", page: "preferences" },
-      body: { json: () => raw.json() },
-    } as unknown as PathfinderRequest);
-    assert(response instanceof Response);
-    const body = await response.json();
-    const error = { status: response.status, code: body.code };
-    assert(body.detail.includes("revision 1 persisted"));
-    assertEquals(error.status, 503);
-    assertEquals(error.code, "plugin_settings_source_commit_failed");
-    assertEquals(
-      (await b.store.forPlugin("transition").page(b.page)).revision,
-      1,
-    );
-    assertEquals(Deno.readTextFileSync(ledgerFile), oldLedger);
-    assertEquals(b.runtime.status("transition")!.generation, null);
-    assertEquals(b.manager.hosts.has("transition"), false);
-    assert(oldService);
-    assertEquals(failedLedger, true);
-    Deno.renameSync = originalRename;
-    // A new host at the between-files boundary must retire old intent before spawn.
-    const restarted = createPluginManager(
-      b.fixture.vault,
-      () => Promise.resolve(null),
-      1,
-      b.fixture.statePath,
-      {
-        internalRoot: `${b.fixture.root}/empty-internal`,
-        persistence: { commit: (effect) => b.gate.run(effect) },
-      },
-    );
-    const runtime = restarted.configureRuntime({
-      operational: () => true,
-      writable: () => true,
-      commit: (effect) => b.gate.run(effect),
-    });
     try {
-      await runtime.reconcile();
-      await pluginSettled(runtime, "transition", "ready");
-      const consumer = await runtime.invokeCommand(
-        "transition",
-        "state",
-        {},
-      ) as { settings: { revision: number }; network: string };
-      assertEquals(consumer.settings.revision, 1);
-      assert(consumer.network !== "granted");
-      const fresh = await restarted.network.view("transition");
-      assertEquals(fresh.source.settingsRevision, 1);
-      assertEquals(fresh.effectiveNetwork, []);
-      assertEquals(fresh.approvedNetwork, [{
-        type: "host",
-        authority: "127.0.0.1:8123",
-      }]);
-      console.log(
-        JSON.stringify({
-          persistedFailureCode: error.code,
-          oldOwnerDead: true,
-          restartConsumer: consumer,
+      state.config = new GlobalConfig(
+        testEnvironment({
+          GLOBNOTES_GLOBNOTES_PATH: b.fixture.vault,
+          GLOBNOTES__METADATA_PATH: b.fixture.metadataBase,
+          fixtureStatePath: b.fixture.statePath,
+          fixtureScenario: publicScenario(),
         }),
       );
+      state.identity = await openFixtureIdentity(
+        scope,
+        state.config,
+        publicScenario().identity,
+        () => b.manager,
+      );
+      const session = await signIn(state.identity.sessions, {
+        username: "alice",
+        password: "password",
+      });
+      state.lifecycle = fixtureLifecycle(state.config);
+      state.plugins = b.manager;
+      state.pluginData = b.store;
+      const oldService = b.runtime.status("transition")!.generation;
+      const ledgerFile =
+        `${b.fixture.statePath}/plugin-network/transition.json`;
+      const oldLedger = Deno.readTextFileSync(ledgerFile);
+      // Fail only the actual ledger effect after the settings rename, once.
+      let failedLedger = false;
+      Deno.renameSync = (from, to) => {
+        if (String(to) === ledgerFile && !failedLedger) {
+          failedLedger = true;
+          throw Error("owned ledger publication failure");
+        }
+        originalRename(from, to);
+      };
+      const raw = new Request(
+        "http://fixture/_/api/plugin-host/transition/settings/preferences",
+        {
+          method: "PUT",
+          headers: {
+            "content-type": "application/json",
+            authorization: `Bearer ${session.access_token}`,
+          },
+          body: JSON.stringify({
+            revision: 0,
+            values: {
+              message: "persisted despite publication failure",
+              protect: false,
+              limit: 5,
+            },
+          }),
+        },
+      );
+      const response = await settingsPut({
+        _raw: raw,
+        params: { id: "transition", page: "preferences" },
+        body: raw,
+      } as unknown as PathfinderRequest);
+      assert(response instanceof Response);
+      const body = await response.json();
+      const error = { status: response.status, code: body.code };
+      assert(body.detail.includes("revision 1 persisted"));
+      assertEquals(error.status, 503);
+      assertEquals(error.code, "plugin_settings_source_commit_failed");
+      assertEquals(
+        (await b.store.forPlugin("transition").page(b.page)).revision,
+        1,
+      );
+      assertEquals(Deno.readTextFileSync(ledgerFile), oldLedger);
+      assertEquals(b.runtime.status("transition")!.generation, null);
+      assertEquals(b.manager.hosts.has("transition"), false);
+      assert(oldService);
+      assertEquals(failedLedger, true);
+      Deno.renameSync = originalRename;
+      // A new host at the between-files boundary must retire old intent before spawn.
+      const restarted = createPluginManager(
+        b.fixture.vault,
+        () => Promise.resolve(null),
+        1,
+        b.fixture.statePath,
+        {
+          internalRoot: `${b.fixture.root}/empty-internal`,
+          persistence: { commit: (effect) => b.gate.run(effect) },
+        },
+      );
+      const runtime = restarted.configureRuntime({
+        operational: () => true,
+        writable: () => true,
+        commit: (effect) => b.gate.run(effect),
+      });
+      try {
+        await runtime.reconcile();
+        await pluginSettled(runtime, "transition", "ready");
+        const consumer = await runtime.invokeCommand(
+          "transition",
+          "state",
+          {},
+        ) as { settings: { revision: number }; network: string };
+        assertEquals(consumer.settings.revision, 1);
+        assert(consumer.network !== "granted");
+        const fresh = await restarted.network.view("transition");
+        assertEquals(fresh.source.settingsRevision, 1);
+        assertEquals(fresh.effectiveNetwork, []);
+        assertEquals(fresh.approvedNetwork, [{
+          type: "host",
+          authority: "127.0.0.1:8123",
+        }]);
+        console.log(
+          JSON.stringify({
+            persistedFailureCode: error.code,
+            oldOwnerDead: true,
+            restartConsumer: consumer,
+          }),
+        );
+      } finally {
+        restarted.stop();
+        await runtime.close();
+      }
+      assertEquals(
+        [...Deno.readDirSync(`${b.fixture.statePath}/plugin-network`)].filter((
+          entry,
+        ) => entry.name.startsWith(".permission-")).length,
+        0,
+      );
     } finally {
-      restarted.stop();
-      await runtime.close();
+      Deno.renameSync = originalRename;
+      await b.close();
+      Object.assign(state, previousState);
     }
-    assertEquals(
-      [...Deno.readDirSync(`${b.fixture.statePath}/plugin-network`)].filter((
-        entry,
-      ) => entry.name.startsWith(".permission-")).length,
-      0,
-    );
-  } finally {
-    Deno.renameSync = originalRename;
-    await b.close();
-    Object.assign(state, previousState);
-  }
-});
+  }));
 
 Deno.test("review repairs: R02 settings and permission writers settle without lock inversion and stale settings preserve files", async () => {
   const b = await settingsTransitionFixture();

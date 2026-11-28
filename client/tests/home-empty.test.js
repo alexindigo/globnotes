@@ -6,6 +6,7 @@ import { createMemoryHistory, createRouter } from "vue-router";
 
 import Home from "../views/Home.vue";
 import { useGlobalStore } from "../globalStore.js";
+import { accountProjection } from "./helpers/account-projection.js";
 
 vi.mock("../api.js", () => ({
   getNotes: vi.fn().mockResolvedValue([]),
@@ -27,7 +28,7 @@ describe("Home empty vault", () => {
     setActivePinia(createPinia());
     const store = useGlobalStore();
     store.config = {
-      authType: "none",
+      ...accountProjection({ level: "edit" }),
       notesPath: "/vault",
       quickAccessLimit: 4,
       quickAccessSort: "lastModified",
@@ -49,7 +50,7 @@ describe("Home empty vault", () => {
     setActivePinia(createPinia());
     const store = useGlobalStore();
     store.config = {
-      authType: "read_only",
+      ...accountProjection({ guest: true, level: "view" }),
       notesPath: "/vault",
       quickAccessLimit: 4,
       quickAccessSort: "lastModified",
@@ -73,7 +74,7 @@ describe("Home empty vault", () => {
     expect(getNotes).not.toHaveBeenCalled();
 
     store.config = {
-      authType: "none",
+      ...accountProjection({ level: "edit" }),
       notesPath: "/vault",
       quickAccessLimit: 4,
       quickAccessSort: "lastModified",

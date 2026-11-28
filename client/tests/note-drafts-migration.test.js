@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createNoteDraftStore } from "../noteDrafts.js";
 import { getStoredToken, isCurrentTokenStored, storeToken } from "../tokenStorage.js";
+import { identityTokenScope } from "../../shared/identity_token.ts";
 
 const appKeys = [
   "token", "defaultEditorMode", "expandedFolders", "sidebarRecent",
@@ -17,6 +18,7 @@ describe("draft namespace and legacy migration", () => {
   });
 
   it.each([false, true])("editing a note named token preserves authentication (remembered=%s)", persist => {
+    localStorage.setItem("token", "untouched legacy bytes");
     storeToken("auth-token", persist);
     const drafts = createNoteDraftStore();
     expect(drafts.load("token", 0)).toBeNull();
@@ -27,7 +29,9 @@ describe("draft namespace and legacy migration", () => {
     expect(drafts.load("token", 1)).toBe("user work");
     drafts.clear();
     expect(getStoredToken()).toBe("auth-token");
-    expect(localStorage.getItem("token")).toBe(persist ? "auth-token" : null);
+    const tokenKey = identityTokenScope("").key;
+    expect([sessionStorage.getItem(tokenKey), localStorage.getItem(tokenKey), localStorage.getItem("token")])
+      .toEqual(["auth-token", persist ? "auth-token" : null, "untouched legacy bytes"]);
   });
 
   it.each(appKeys)("never reads, migrates, overwrites or clears the app-owned key %s", path => {

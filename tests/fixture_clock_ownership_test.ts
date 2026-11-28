@@ -63,6 +63,10 @@ for (const captureFails of [false, true]) {
         let sessions = 0;
         export const bindAddress = () => "127.0.0.1";
         export const httpOrigin = port => "http://globnotes.test:" + port;
+        export async function nativeFixtureAdmin() { return { token: "fixture-admin" }; }
+        export async function signInNative() { record("sign in"); }
+        export const commitNativeAccess = undefined, openNativeSettings = undefined,
+          selectAccessLevel = undefined, tokenExpression = undefined;
         export function bootServer() {
           record("server started");
           return {baseUrl:"http://globnotes.test:1", pid:1, close() {record("server closed");}};
@@ -113,6 +117,12 @@ for (const captureFails of [false, true]) {
             [
               new URL(
                 "../client/tests/e2e/harness-helpers.mjs",
+                import.meta.url,
+              ).href
+            ]: toFileUrl(adapters).href,
+            [
+              new URL(
+                "../client/tests/e2e/settings-access-native.mjs",
                 import.meta.url,
               ).href
             ]: toFileUrl(adapters).href,
@@ -180,6 +190,7 @@ for (const captureFails of [false, true]) {
           "server started",
           "session started",
           "goto",
+          "sign in",
           "poll",
           "second session failed",
           "capture live",
@@ -662,11 +673,11 @@ Deno.test("fixture clock PR109: authentication owns the verifier until the real 
     const confirmed = await clock.code(bundle.secret);
     assertEquals(
       (await post("setup", {
-        mode: "password",
+        everybody: "none",
+        updateId: crypto.randomUUID(),
         username: "alice",
         password: "secret",
-        totpKey: bundle.key,
-        totpCode: confirmed,
+        totp: { key: bundle.key, code: confirmed },
       })).status,
       200,
     );
@@ -682,7 +693,8 @@ Deno.test("fixture clock PR109: authentication owns the verifier until the real 
         await release.promise;
         const result = await post("token", {
           username: "alice",
-          password: `secret${code}`,
+          password: "secret",
+          totp: code,
         });
         assertEquals(result.status, 200);
         const check = await fetch(`${server.baseUrl}/_/api/auth-check`, {
@@ -1177,11 +1189,11 @@ Deno.test("fixture clock: real child verifier rejects expired input and serves a
     let old = await clock.code(bundle.secret, -1);
     const confirmed = await clock.code(bundle.secret);
     const setup = await post("setup", {
-      mode: "password",
+      everybody: "none",
+      updateId: crypto.randomUUID(),
       username: "alice",
       password: "secret",
-      totpKey: bundle.key,
-      totpCode: confirmed,
+      totp: { key: bundle.key, code: confirmed },
     });
     assertEquals(setup.status, 200);
     await setup.arrayBuffer();
@@ -1203,13 +1215,15 @@ Deno.test("fixture clock: real child verifier rejects expired input and serves a
       }
       const expired = await post("token", {
         username: "alice",
-        password: `secret${old}`,
+        password: "secret",
+        totp: old,
       });
       assertEquals(expired.status, 401);
       await expired.arrayBuffer();
       const login = await post("token", {
         username: "alice",
-        password: `secret${code}`,
+        password: "secret",
+        totp: code,
       });
       assertEquals(login.status, 200);
       const { access_token: token } = await login.json();

@@ -147,15 +147,6 @@ export async function getConfig() {
   }
 }
 
-export async function postSetup(data) {
-  try {
-    const response = await api.post("setup", data);
-    return response.data;
-  } catch (response) {
-    return Promise.reject(response);
-  }
-}
-
 // Prepared account transports do not use the legacy live-token interceptor.
 // Controllers pass the credential captured by the original form at dispatch.
 const accountApi = axios.create({ baseURL: `${pathPrefix}/_/api` });
@@ -179,10 +170,6 @@ export async function getIdentityAccountOutcome(operationId, options) {
   return { ...data, settled: headers["globnotes-creation-settled"] === "true" };
 }
 
-export async function getAccessSettings() { return (await api.get("access")).data; }
-export async function putAccessSettings(data) { return (await api.put("access", data)).data; }
-export async function postAccessTotpEnrolment(username) { return (await api.post("access/totp-enrolment", { username })).data; }
-
 export async function getConflicts() { return (await api.get("conflicts")).data; }
 export async function getConflict(id) { return (await api.get(`conflicts/${encodeURIComponent(id)}`)).data; }
 export async function resolveConflict(id, request) { return (await api.post(`conflicts/${encodeURIComponent(id)}/resolve`, request)).data; }
@@ -196,48 +183,6 @@ export async function putDriverSecret(id, key, request) { return (await api.put(
 export async function deleteDriverSecret(id, key, request) { return (await api.delete(`${driverRoute(id)}/secrets/${encodeURIComponent(key)}`, { data: request })).data; }
 export async function syncDriver(id, request) { return (await api.post(`${driverRoute(id)}/sync`, request)).data; }
 export async function decideDriver(id, request) { return (await api.post(`${driverRoute(id)}/decisions`, request)).data; }
-
-// Mint a TOTP enrolment bundle for the setup wizard (key, uri, qr,
-// secret). Nothing is stored server-side until setup completes.
-export async function postTotpEnrolment(username) {
-  try {
-    const response = await api.post("setup/totp-enrolment", { username });
-    return response.data;
-  } catch (response) {
-    return Promise.reject(response);
-  }
-}
-
-// Re-arm first-run setup (menu: Access mode). Auth-required server-side.
-export async function resetSetup() {
-  try {
-    const response = await api.post("setup/reset");
-    return response.data;
-  } catch (response) {
-    return Promise.reject(response);
-  }
-}
-
-export async function getToken(username, password, totp) {
-  try {
-    const response = await api.post("token", {
-      username: username,
-      password: totp ? password + totp : password,
-    });
-    return response.data.access_token;
-  } catch (response) {
-    return Promise.reject(response);
-  }
-}
-
-export async function authCheck() {
-  try {
-    const response = await api.get("auth-check");
-    return response.data;
-  } catch (response) {
-    return Promise.reject(response);
-  }
-}
 
 export async function getNotes(term, sort, order, limit, nested, folder) {
   try {
@@ -314,12 +259,8 @@ export async function renderBuffer(markdown, disabled = []) {
 }
 
 export async function getPlugins() {
-  try {
-    const response = await api.get("plugins");
-    return response.data;
-  } catch (response) {
-    return Promise.reject(response);
-  }
+  const { plugins } = await getPluginHostCatalog();
+  return plugins.filter(plugin => plugin.enabled).map(({ id, name, version, client }) => ({ id, name, version, client }));
 }
 
 /** `baseContent`: the text this update is based on (required by the server);
@@ -512,6 +453,7 @@ export async function invokePluginCommand(id, command, payload = {}) {
       `plugin-host/${encodeURIComponent(id)}/commands/${encodeURIComponent(command)}`,
       payload,
     );
+    if (response.data?.code === "plugin_outcome_unknown") throw Error(response.data.detail);
     return response.data.result;
   } catch (response) {
     return Promise.reject(response);

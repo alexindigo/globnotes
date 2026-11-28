@@ -8,10 +8,11 @@ import { HttpError, type PathfinderRequest } from "@pathfinder/pathfinder";
 import { state } from "@server/state.ts";
 import { noteMutationLease } from "@server/auth/middleware.ts";
 import { committedJson } from "@server/auth/http_policy.ts";
+import { deliverAdmissionRefusals } from "@server/auth/admission_refusal.ts";
 
 /** Upload a file into the given directory (relative to the notes
  * root), creating the directory if needed. */
-export default async function (request: PathfinderRequest) {
+export default deliverAdmissionRefusals(async (request: PathfinderRequest) => {
   try {
     const lease = await noteMutationLease(request._raw);
     const form = await request.body.form();
@@ -34,4 +35,4 @@ export default async function (request: PathfinderRequest) {
     }
     throw e;
   }
-}
+});

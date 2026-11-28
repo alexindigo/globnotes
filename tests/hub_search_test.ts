@@ -8,7 +8,7 @@ import {
 } from "../server/hub/subscribers.ts";
 import { setupState } from "./helpers/state.ts";
 import { state } from "../server/state.ts";
-import { PluginLifecycle } from "../server/plugins/lifecycle.ts";
+import { fixtureLifecycle } from "./helpers/config.ts";
 import type { OperationFact } from "../server/plugins/contracts.ts";
 import { hubOperationsFixture } from "./helpers/hub_fixture.ts";
 import { Fts5Indexer } from "../server/search/fts5.ts";
@@ -75,7 +75,7 @@ Deno.test("hub facts: local rename is delete/create after index reconciliation, 
   const s = setupState(vault),
     facts: OperationFact[] = [],
     syncs: OperationFact[] = [];
-  const lifecycle = new PluginLifecycle(s.config);
+  const lifecycle = fixtureLifecycle(s.config);
   subscribeExternalFacts(s.hub, lifecycle);
   lifecycle.onFact((fact) => {
     facts.push(fact);

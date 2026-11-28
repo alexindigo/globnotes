@@ -10,6 +10,7 @@ import {
 } from "./helpers/boot.ts";
 import { command, DENO } from "./helpers/process.ts";
 import { copyRepositorySources } from "./helpers/repository_sources.ts";
+import { fixtureAdmin } from "./helpers/fixture_http.ts";
 
 const ROOT = fromFileUrl(new URL("../", import.meta.url));
 
@@ -65,10 +66,13 @@ Deno.test("config acceptance: shell and server retain original provenance; saves
     const save = async (name: string) => {
       const body = new FormData();
       body.set("name", name);
-      const response = await fetch(`${server!.baseUrl}/notes/_/api/brand`, {
-        method: "POST",
-        body,
-      });
+      const response = await (await fixtureAdmin(server!, "/notes")).fetch(
+        `${server!.baseUrl}/notes/_/api/brand`,
+        {
+          method: "POST",
+          body,
+        },
+      );
       await response.body?.cancel();
       return response.status;
     };
@@ -82,14 +86,14 @@ Deno.test("config acceptance: shell and server retain original provenance; saves
       pinned: false,
     });
     assertEquals(initial.quickAccessTitle, "TOML consumer");
-    const auth = await Deno.readTextFile(`${state}/config.json`);
+    const auth = await Deno.readTextFile(`${metadata}/_/accounts.json`);
     assertEquals(await save("Restart consumer"), 200);
     assertEquals((await manifest()).name, "Restart consumer");
     assertEquals(parse(await Deno.readTextFile(file)).brand, {
       accent: "#123456",
       name: "Restart consumer",
     });
-    assertEquals(await Deno.readTextFile(`${state}/config.json`), auth);
+    assertEquals(await Deno.readTextFile(`${metadata}/_/accounts.json`), auth);
     await server.close();
     server = undefined;
     server = await bootServer(env);

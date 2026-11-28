@@ -4,7 +4,11 @@ import type { DriverCapabilities } from "../../server/plugins/driver_contract.ts
 import { readManifest } from "../../server/plugins/manifest.ts";
 import { pluginFixture } from "./plugin_fixture.ts";
 import { scopedPluginFixture } from "./plugin_fixture_engine.ts";
-import { bootServer, UnexpectedServerExitError } from "./boot.ts";
+import {
+  bootServer,
+  fixtureSignIn,
+  UnexpectedServerExitError,
+} from "./boot.ts";
 import { assert, assertEquals } from "@std/assert";
 import { createFixtureClock } from "./fixture_clock.ts";
 import { createFixtureScope } from "./fixture_scope_engine.ts";
@@ -77,6 +81,7 @@ export async function storageServerFixture(
   options: {
     observedTime?: number;
     native?: boolean;
+    everybody?: "edit" | "view";
     /** Low-level lifecycle contract port; ordinary scenarios use native fetch. */
     requestFetch?: typeof fetch;
     /** Low-level child acquisition port for lifecycle/pipe contracts. */
@@ -86,6 +91,7 @@ export async function storageServerFixture(
   const {
     observedTime: initialTime,
     native,
+    everybody,
     requestFetch = fetch,
     serverBoot = bootServer,
   } = options;
@@ -116,10 +122,12 @@ export async function storageServerFixture(
           : {}),
       });
     });
+    const scenario = publicScenario(everybody);
+    const admin = scenario.identity!.people[0];
     const env = {
       GLOBNOTES_GLOBNOTES_PATH: fixture.vault,
       GLOBNOTES__METADATA_PATH: fixture.metadataBase,
-      fixtureScenario: publicScenario(),
+      fixtureScenario: scenario,
       GLOBNOTES_GLOBNOTES_PLUGINS_AUTOENABLE: "false",
     };
     // Control only this owned subprocess's observed-time seam. No process env,
@@ -157,6 +165,7 @@ export async function storageServerFixture(
     });
     const serverOptions = { denoArgs: ["--preload", preload] };
     const observationFailures = new WeakMap<TestServer, AbortSignal>();
+    const adminTokens = new WeakMap<TestServer, string>();
     const reportedShutdownFailures = new WeakMap<TestServer, unknown>();
     const closeCandidate = async (child: TestServer) => {
       try {
@@ -224,6 +233,15 @@ export async function storageServerFixture(
           signal: failure.signal,
         });
         failure.signal.throwIfAborted();
+        adminTokens.set(
+          child,
+          await fixtureSignIn(
+            child.baseUrl,
+            admin,
+            "",
+            AbortSignal.any([scope.signal, failure.signal]),
+          ),
+        );
         return bound;
       } catch (primary) {
         // Acquisition already owns this child, but rejection must finish its
@@ -255,7 +273,10 @@ export async function storageServerFixture(
             {
               method,
               signal: requestSignal,
-              headers: { "content-type": "application/json" },
+              headers: {
+                "content-type": "application/json",
+                authorization: `Bearer ${adminTokens.get(server)!}`,
+              },
               body: body === undefined ? undefined : JSON.stringify(body),
             },
           ));

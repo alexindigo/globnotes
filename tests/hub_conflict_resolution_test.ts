@@ -9,14 +9,14 @@ import {
   type PluginRuntime,
 } from "../server/plugins/runtime.ts";
 import type { HookName, OperationFact } from "../server/plugins/contracts.ts";
-import { AuthType } from "./helpers/config.ts";
+import { createUuid } from "../shared/uuid.ts";
+import { signIn } from "./helpers/session_delivery.ts";
 import { HubGate } from "../server/hub/gate.ts";
 import { versionOf } from "../server/hub/merge.ts";
 import { Fts5Indexer } from "../server/search/fts5.ts";
 import { subscribeIndex } from "../server/hub/subscribers.ts";
 import resolve from "../server/api/endpoints/_/api/conflicts/%23id/resolve/post.ts";
 import { HttpError, type PathfinderRequest } from "@pathfinder/pathfinder";
-import { state } from "../server/state.ts";
 import { VaultHub } from "../server/hub/hub.ts";
 
 const actions = ["original", "copy", "both", "merge"] as const;
@@ -164,7 +164,7 @@ Deno.test("conflict resolution: awaited guards cannot lend stale bytes, record i
       "symlink",
     ] as const
   ) {
-    const f = await hubOperationsFixture();
+    const f = await hubOperationsFixture({}, { httpEverybody: "edit" });
     try {
       const reviewed = pair(f);
       const entered = Promise.withResolvers<void>(),
@@ -179,7 +179,12 @@ Deno.test("conflict resolution: awaited guards cannot lend stale bytes, record i
       const sending = ops.resolveConflict("pair", {
         ...reviewed,
         action: "copy",
-      }, f.api());
+      }, {
+        origin: "api",
+        lease: await f.identity!.composition.auth.noteMutationLease(
+          new Request("http://fixture/"),
+        ),
+      });
       await entered.promise;
       if (change === "original" || change === "copy") {
         Deno.writeTextFileSync(`${f.vault}/${change}.md`, "outside");
@@ -188,7 +193,13 @@ Deno.test("conflict resolution: awaited guards cannot lend stale bytes, record i
         Deno.renameSync(`${f.vault}/copy.md`, `${f.vault}/renamed.md`);
         f.hub.scanNow();
       }
-      if (change === "readonly") f.config.authType = AuthType.READ_ONLY;
+      if (change === "readonly") {
+        const acl = f.identity!.acl, before = acl.capture();
+        acl.save({ everybody: "view", grants: before.value.grants }, before, {
+          actorId: null,
+          updateId: createUuid(),
+        });
+      }
       if (change === "epoch") f.lifecycle.bumpEpoch();
       if (change === "symlink") {
         Deno.renameSync(`${f.vault}/copy.md`, `${f.vault}/renamed.md`);
@@ -198,7 +209,7 @@ Deno.test("conflict resolution: awaited guards cannot lend stale bytes, record i
       const error = await sending.catch((e) => e);
       assertEquals(
         error.status,
-        change === "readonly" ? 403 : change === "symlink" ? 404 : 409,
+        change === "symlink" ? 404 : 409,
       );
       if (["original", "copy", "rename"].includes(change)) {
         assertEquals(error.code, "conflict_stale");
@@ -488,20 +499,19 @@ function request(
     }),
     params: { id: "pair" },
     body: {
-      json: async () => {
+      text: async () => {
         await prepare();
-        return body;
+        return JSON.stringify(body);
       },
     },
   } as unknown as PathfinderRequest<{ id: string }>;
 }
 Deno.test("conflict resolution REST: original lease precedes body preparation; read-only refuses every action", async () => {
   for (const action of actions) {
-    const f = await hubOperationsFixture();
+    const f = await hubOperationsFixture({}, { httpEverybody: "view" });
     try {
       const reviewed = pair(f);
       let prepared = false;
-      f.config.authType = AuthType.READ_ONLY;
       const error = await resolve(request({ ...reviewed, action }, () => {
         prepared = true;
       })).catch((e) => e);
@@ -512,7 +522,7 @@ Deno.test("conflict resolution REST: original lease precedes body preparation; r
       await f.close();
     }
   }
-  const f = await hubOperationsFixture();
+  const f = await hubOperationsFixture({}, { httpEverybody: "edit" });
   try {
     const reviewed = pair(f);
     const response = await resolve(
@@ -523,11 +533,23 @@ Deno.test("conflict resolution REST: original lease precedes body preparation; r
     assertEquals(response.status, 409);
     assertEquals((await response.json()).code, "operation_conflict");
     assertEquals(f.hub.conflict("pair")!.state, "open");
-    const unauthorized = await resolve(
-      request({ ...reviewed, action: "both" }, () => {
-        state.auth = {} as typeof state.auth;
-      }),
-    ).catch((e) => e);
+    const identity = f.identity!;
+    const session = await signIn(identity.sessions, {
+      username: "alice",
+      password: "password",
+    });
+    const old = request({ ...reviewed, action: "both" }, async () => {
+      await new Response(
+        await identity.account.change(session.principal, {
+          revision: session.principal.credentialRevision,
+          updateId: createUuid(),
+          currentPassword: "password",
+          newPassword: "new password",
+        }),
+      ).json();
+    });
+    old._raw.headers.set("authorization", `Bearer ${session.access_token}`);
+    const unauthorized = await resolve(old).catch((e) => e);
     assert(unauthorized instanceof HttpError);
     assertEquals(unauthorized.status, 401);
     assertEquals(f.hub.conflict("pair")!.state, "open");
@@ -537,7 +559,7 @@ Deno.test("conflict resolution REST: original lease precedes body preparation; r
 });
 
 Deno.test("conflict resolution REST: stale envelope, both bases/revision, closed no-op and malformed payload", async () => {
-  const f = await hubOperationsFixture();
+  const f = await hubOperationsFixture({}, { httpEverybody: "edit" });
   try {
     const reviewed = pair(f);
     for (

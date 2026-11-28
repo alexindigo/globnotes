@@ -94,7 +94,8 @@ async function prepare(
  * enclosing scope, with instance service eligibility from the same sessions. */
 export function withIdentityComposition<T>(
   body: (f: Awaited<ReturnType<typeof compose>>) => T | PromiseLike<T>,
-  options: { expirySeconds?: number; changeLimit?: number } = {},
+  options: { expirySeconds?: number; changeLimit?: number; browser?: boolean } =
+    {},
 ): Promise<T> {
   return withIdentityScope(
     (identity) =>
@@ -104,11 +105,19 @@ export function withIdentityComposition<T>(
         serviceEligibility: identityServiceEligibility(identity.sessions),
         changeLimit: options.changeLimit,
         manifest: {
-          runtime: { server: "service.js" },
+          runtime: {
+            server: "service.js",
+            ...(options.browser ? { client: "browser.js" } : {}),
+          },
           capabilities: { read: ["vault"], write: ["vault"] },
           settings: [fixturePage],
         },
-        files: { "service.js": SERVICE },
+        files: {
+          "service.js": SERVICE,
+          ...(options.browser
+            ? { "browser.js": "export function activate() {}" }
+            : {}),
+        },
       }, (operations) => body(compose(identity, operations))),
     options,
   );

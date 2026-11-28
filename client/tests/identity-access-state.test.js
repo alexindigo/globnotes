@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { afterEach, expect, it, vi } from "vitest";
-import { createAccessSettingsState, createIdentityAccessSettingsState } from "../accessSettingsState.js";
+import { createIdentityAccessSettingsState } from "../identityAccessSettingsState.js";
 import { registerSessionParticipant, resolveParticipants } from "../sessionActions.js";
 
 const active = [], replies = [];
@@ -25,7 +25,7 @@ async function creating(f) {
 }
 it("identity ACL commit does not depend on the obsolete settingsWritable auth-mode field", async () => {
   const write = vi.fn(async request => ({ updateId: request.updateId, committed: true }));
-  const controller = createAccessSettingsState({ identity: true, read: async () => view(), write, canManage: () => true, token: () => "token" });
+  const controller = createIdentityAccessSettingsState({ read: async () => view(), write, canManage: () => true, token: () => "token" });
   active.push(controller); await controller.load(); controller.setEverybody("edit");
   expect(await controller.requestCommit()).toBe(true); expect(write).toHaveBeenCalledOnce();
 });
@@ -184,20 +184,47 @@ it("a timeout keeps the original ACL wire and accepts its late committed reply w
   held.resolve({ updateId: write.mock.calls[0][0].updateId, committed: true, capabilities: { canManageVault: true } }); await f.controller.settle();
   expect(f.controller.state.unknown).toBe(false); expect(f.controller.state.view.signature).toBe("committed"); expect(write).toHaveBeenCalledOnce();
 });
-it("a failed receipt read cannot overwrite the original PUT's accepted acknowledgment", async () => {
+it("a late acknowledged PUT leaves no stale review to overwrite its success", async () => {
   vi.useFakeTimers();
-  const put = heldResponse(), receipt = heldResponse(), reading = Promise.withResolvers(), didComplete = Promise.withResolvers();
-  const write = vi.fn(() => put.promise), readStatus = vi.fn(id => { reading.resolve(id); return receipt.promise; });
+  const put = heldResponse(), didComplete = Promise.withResolvers();
+  const write = vi.fn(() => put.promise), readStatus = vi.fn().mockRejectedValue(Error("review should never start"));
   const { controller: c } = await fixture({ write, readStatus, completed: didComplete.resolve, timeoutMs: 20 });
   c.setLevel("sam", "view"); const attempt = c.requestCommit(); await vi.advanceTimersByTimeAsync(20);
   expect(await attempt).toBe(false);
-  const review = c.review(), { updateId } = write.mock.calls[0][0];
-  expect(await reading.promise).toBe(updateId);
+  expect(await c.review()).toBe(false);
+  const { updateId } = write.mock.calls[0][0];
   put.resolve({ updateId, committed: true });
   expect(await didComplete.promise).toEqual({ updateId, committed: true });
-  receipt.reject(Error("lost review response"));
-  expect(await review).toBe(false);
+  expect(await c.settle()).toBe(true);
+  expect(await c.review()).toBe(false);
+  expect(readStatus.mock.calls).toEqual([]);
   expect(c.state).toMatchObject({ status: "Access saved.", error: "", dirty: false, unknown: false });
+});
+it("observation timeout does not admit any Access intent ahead of the original PUT", async () => {
+  vi.useFakeTimers();
+  const held = heldResponse(), admitted = Promise.withResolvers();
+  const write = vi.fn(request => { admitted.resolve(request); return held.promise; });
+  const readStatus = vi.fn(async () => ({ matched: true, capabilities: { canManageVault: false } }));
+  const { controller, read, completed } = await fixture({ write, readStatus, timeoutMs: 20 });
+  controller.setLevel("sam", "view");
+  const attempt = controller.requestCommit(), request = await admitted.promise;
+  await vi.advanceTimersByTimeAsync(20);
+  expect(await attempt).toBe(false);
+  const { canReview, canSave, mutable, inFlight, unknown } = controller.state;
+  const intents = [await controller.review(), await controller.discard(), await controller.resolveDeparture("close", "discard"),
+    await controller.requestCommit(), await controller.load({ retain: true }), await controller.openDialog("existing")];
+  expect({ canReview, canSave, mutable, inFlight, unknown, intents }).toEqual({
+    canReview: false, canSave: false, mutable: false, inFlight: true, unknown: true,
+    intents: [false, false, false, false, null, false],
+  });
+  expect([readStatus.mock.calls, completed.mock.calls]).toEqual([[], []]);
+  held.reject(Error("original PUT response lost"));
+  expect(await controller.settle()).toBe(true); // settled wire, still unknown until explicit Review
+  expect(controller.state).toMatchObject({ inFlight: false, canReview: true, unknown: true });
+  expect(await controller.review()).toBe(true);
+  expect(readStatus.mock.calls).toEqual([[request.updateId, { token: "alice-token" }]]);
+  expect(completed.mock.calls).toEqual([[expect.objectContaining({ updateId: request.updateId, recovered: true })]]);
+  expect(write).toHaveBeenCalledOnce(); expect(read).toHaveBeenCalledOnce();
 });
 it.each(["acl", "create"])("%s dispatch cannot borrow a replacement identity in its queued microtask", async kind => {
   let scope = "alice"; const createAccount = vi.fn(), f = await fixture({ sessionKey: () => scope, createAccount });
@@ -312,6 +339,35 @@ it("late reads cannot erase choices edited after their observation deadline", as
   const loading = f.controller.load(); await vi.advanceTimersByTimeAsync(21); expect(await loading).toBeNull();
   f.controller.setLevel("sam", "none"); held.resolve({ ...view(), revision: 3, signature: "later" }); await f.controller.settle();
   expect([f.controller.state.grants.sam, f.controller.state.view.signature, f.controller.state.dirty]).toEqual(["none", "captured", true]);
+});
+it("an initial Access read timeout is not an unknown write and admits no submission", async () => {
+  vi.useFakeTimers(); const held = heldResponse(), read = vi.fn(() => held.promise), write = vi.fn(), completed = vi.fn();
+  const controller = createIdentityAccessSettingsState({ read, write, completed, canManage: () => true, token: () => "alice-token", timeoutMs: 20 });
+  active.push(controller); const loading = controller.load();
+  expect([controller.state.loading, controller.state.mutable, await controller.requestCommit()]).toEqual([true, false, false]);
+  await vi.advanceTimersByTimeAsync(20);
+  expect([await loading, controller.state.loading, controller.state.unknown, controller.state.canReview, write.mock.calls, completed.mock.calls]).toEqual([null, false, false, false, [], []]);
+});
+it("a stalled receipt read ends observation but preserves the proposal and forbids replay", async () => {
+  vi.useFakeTimers(); const held = heldResponse(), readStatus = vi.fn(() => held.promise);
+  const write = vi.fn(async () => { throw Error("lost"); }), completed = vi.fn();
+  const f = await fixture({ write, readStatus, completed, timeoutMs: 20 });
+  f.controller.setLevel("sam", "none"); expect(await f.controller.requestCommit()).toBe(false);
+  const review = f.controller.review(); expect(f.controller.state.reviewing).toBe(true);
+  await vi.advanceTimersByTimeAsync(20);
+  expect([await review, f.controller.state.reviewing, f.controller.state.unknown, f.controller.state.grants.sam, await f.controller.requestCommit()]).toEqual([false, false, true, "none", false]);
+  held.resolve({ matched: true }); await f.controller.settle();
+  expect([write.mock.calls.length, readStatus.mock.calls, completed.mock.calls]).toEqual([1, [[write.mock.calls[0][0].updateId, { token: "alice-token" }]], []]);
+});
+it("failed stale-review read keeps the literal proposal and does not resolve participants again", async () => {
+  const original = view();
+  const read = vi.fn().mockResolvedValueOnce(original).mockRejectedValueOnce(Error("read failed"));
+  const write = vi.fn(async () => { throw { status: 409 }; });
+  const beforeCommit = vi.fn(async () => true), completed = vi.fn();
+  const f = await fixture({ read, write, beforeCommit, completed });
+  f.controller.setLevel("sam", "none"); expect(await f.controller.requestCommit()).toBe(false);
+  expect([await f.controller.review(), f.controller.state.needsReview, f.controller.state.view, f.controller.state.grants.sam, await f.controller.requestCommit()]).toEqual([false, true, original, "none", false]);
+  expect([beforeCommit.mock.calls, write.mock.calls.length, completed.mock.calls]).toEqual([[[]], 1, []]);
 });
 it.each(["acl", "create"])("%s whole disposal joins original work, caches its join and prevents late success", async kind => {
   const held = heldResponse(), entered = Promise.withResolvers(), completed = vi.fn(), notify = vi.fn();

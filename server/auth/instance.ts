@@ -38,8 +38,7 @@ const pendingRecovery = new Map<string, {
   resume(): Promise<void>;
 }>();
 
-/** Prepared startup only: no globals, routes, services or listeners are installed.
- * I14c4 owns publication and its active config/composition/lifecycle binding.
+/** Open under exclusive custody before publishing the active identity owners.
  * The returned lease owns these exact repositories and exclusive root until close.
  * Recovery authority never escapes into HTTP or the returned services. */
 export async function openInstanceIdentity(
@@ -51,6 +50,7 @@ export async function openInstanceIdentity(
     credentials?: CredentialOptions;
     seedCheckpoint?: Parameters<IdentityBootstrap["provisionConfigured"]>[0];
     recoveryCheckpoint?: (phase: string) => void;
+    sessionClock?: ConstructorParameters<typeof InstanceSessions>[3];
   } = {},
 ) {
   // Capture resolved paths before lock acquisition yields. A caller cannot
@@ -61,6 +61,7 @@ export async function openInstanceIdentity(
   const custody = createOwnershipScope();
   let lifetime: ReturnType<typeof createOperationLease<"live">> | undefined;
   let accounts: AccountRepository | undefined;
+  let assertActive: ((operationId?: string) => void) | undefined;
   let closing: Promise<void> | undefined;
   const retire = () => {
     lifetime?.retire();
@@ -119,9 +120,10 @@ export async function openInstanceIdentity(
         },
       });
     };
-    lifetime = createOperationLease("live", [() => {
+    lifetime = createOperationLease("live", [(operationId) => {
       signal?.throwIfAborted();
       custody.assertCurrent();
+      assertActive?.(operationId);
       return undefined;
     }], [offline]);
     const lease = lifetime.lease;
@@ -169,6 +171,7 @@ export async function openInstanceIdentity(
       accounts,
       signing,
       serviceSettings(settings.instance).sessions,
+      options.sessionClock,
     );
     const legacy = () =>
       legacyIdentityPresent([
@@ -255,6 +258,14 @@ export async function openInstanceIdentity(
       account: new OwnAccount(composition.authority),
       access,
       provisioning: new AccountProvisioning(access, transaction),
+      bindActive(assertCurrent: (operationId?: string) => void) {
+        if (assertActive) {
+          throw new TypeError("Instance identity is already bound.");
+        }
+        lease.assertCurrent();
+        assertCurrent();
+        assertActive = assertCurrent;
+      },
       close,
     });
   } catch (error) {

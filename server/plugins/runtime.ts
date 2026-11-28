@@ -883,6 +883,7 @@ export class PluginRuntime implements Versioning {
     command: string,
     payload: unknown,
     viewer?: ViewerAuthority,
+    requestDispatch?: import("./host.ts").InvocationOptions["requestDispatch"],
   ): Promise<unknown> {
     const entry = this.entries.get(id);
     if (
@@ -897,7 +898,7 @@ export class PluginRuntime implements Versioning {
       [payload],
       false,
       entry.host.limits.serviceCallMs,
-      { viewer },
+      { viewer, requestDispatch },
     );
   }
 
@@ -923,6 +924,7 @@ export class PluginRuntime implements Versioning {
     handlerId: string,
     args: unknown[],
     viewer?: ViewerAuthority,
+    requestDispatch?: import("./host.ts").InvocationOptions["requestDispatch"],
   ): Promise<unknown> {
     const entry = this.entries.get(id);
     if (
@@ -933,7 +935,7 @@ export class PluginRuntime implements Versioning {
       args,
       false,
       entry.host.limits.serviceCallMs,
-      { viewer },
+      { viewer, requestDispatch },
     );
   }
   private async readyGuard(

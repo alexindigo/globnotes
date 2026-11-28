@@ -1,18 +1,15 @@
 // SPDX-License-Identifier: LGPL-3.0-only
+import type { PathfinderRequest } from "@pathfinder/pathfinder";
+import { identityAuthCheck } from "@server/auth/access.ts";
+import { identityHttp } from "@server/auth/http_policy.ts";
+import { state } from "@server/state.ts";
 export const operation = "session";
-
-import { json, type PathfinderRequest } from "@pathfinder/pathfinder";
-
-/** GET /_/api/auth-check — returns "OK" if the request is authenticated.
- * Authenticated route: the middleware does the work. */
-
-export default function (request: PathfinderRequest): Response {
-  // The legacy composition has no account principal or ACL receipt owner.
-  if (request.query.has("accessUpdateId")) {
-    return Response.json({ detail: "Access receipt unavailable." }, {
-      status: 503,
-      headers: { "cache-control": "no-store" },
-    });
-  }
-  return json("OK");
-}
+export default identityHttp((request: PathfinderRequest) => {
+  const { access, composition } = state.identity!;
+  return identityAuthCheck(
+    request._raw,
+    access,
+    composition.auth.principal,
+    composition.responses.status,
+  );
+});

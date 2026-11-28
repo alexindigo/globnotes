@@ -4,6 +4,8 @@ import { createPinia, setActivePinia } from "pinia";
 import SettingsModal from "../components/SettingsModal.vue";
 import { pluginCatalog } from "../pluginRuntime.js";
 import { createPluginPermissionController } from "../pluginPermissionController.js";
+import { useGlobalStore } from "../globalStore.js";
+import { accountProjection } from "./helpers/account-projection.js";
 
 vi.mock("../pluginRuntime.js", async () => {
   const { ref } = await import("vue");
@@ -20,10 +22,13 @@ vi.mock("../api.js", () => ({
     approvedNetwork: [], approvedImports: [], requestedNetwork: [], requestedImports: [], effectiveNetwork: [], effectiveImports: [], rows: [], pendingRequests: [],
     reload: { state: "none", fingerprint: "none" }, runsInBrowser: true, browserComponents: ["editor"] })),
   putPluginPermissions: vi.fn(), getPluginPermissionRequests: vi.fn(async () => []), decidePluginPermissionRequest: vi.fn(),
-  getConfig: vi.fn(), getAccessSettings:vi.fn(), postBrand: vi.fn(), getTree: vi.fn(),
+  getConfig: vi.fn(), postBrand: vi.fn(), getTree: vi.fn(),
 }));
 let wrapper;
-beforeEach(() => setActivePinia(createPinia()));
+beforeEach(() => {
+  setActivePinia(createPinia());
+  useGlobalStore().config = accountProjection();
+});
 afterEach(() => { wrapper?.unmount(); wrapper = null; pluginCatalog.value = null; vi.useRealTimers(); });
 
 async function inventory(extra = []) {
@@ -52,6 +57,9 @@ describe("actual Settings permissions entry", () => {
     await inventory();
     expect(document.body.textContent).toContain("These permission controls apply to sandboxed server Workers only.");
     expect(document.body.textContent).toContain("Browser network loads from rendered content");
+    const trust = document.querySelector('[data-plugin-trust-notice]');
+    trust.querySelector('summary').click(); await flushPromises();
+    expect(trust.textContent).toContain('trusted same-origin application code');
   });
   it("shows inline browser labels on mixed and disabled inventory", async () => {
     await inventory();

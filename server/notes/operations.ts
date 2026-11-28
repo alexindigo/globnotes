@@ -10,6 +10,7 @@
 import * as path from "@std/path";
 import { createUuid } from "../../shared/uuid.ts";
 import { HttpError } from "@pathfinder/pathfinder";
+import { AdmissionRefusal } from "../auth/admission_refusal.ts";
 import type { FileServing } from "../files/file_serving.ts";
 import type { Indexer } from "../state.ts";
 import type { VaultHub } from "../hub/hub.ts";
@@ -114,16 +115,16 @@ export class NoteOperations {
   #admission(ctx?: OperationOrigin, operationId?: string): void {
     if (ctx?.origin === "api") {
       if (!ctx.lease) {
-        throw new HttpError(401, "API mutation request authority is required.");
+        throw new AdmissionRefusal("mutation_authority_required");
       }
       ctx.lease.assertCurrent(operationId);
     }
     const { lifecycle } = this.adapters;
     if (!lifecycle.operational()) {
-      throw new HttpError(503, "setup_required");
+      throw new AdmissionRefusal("setup_required");
     }
     if (!lifecycle.writable()) {
-      throw new HttpError(403, "read-only mode");
+      throw new AdmissionRefusal("operation_not_permitted");
     }
   }
 

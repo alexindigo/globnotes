@@ -4,6 +4,9 @@
 import { runCase } from "./legacy-fixture.mjs";
 import { assert } from "./test-outcomes.mjs";
 import { done, pending, waitUntil } from "../../../tests/helpers/wait.ts";
+import { nativeFixtureAdmin } from "./harness-helpers.mjs";
+import { signInNative } from "./settings-access-native.mjs";
+import { showSidebar } from "./sidebar-navigation-native.mjs";
 
 const settingsRoute = "plugin-host/globnotes-autosave-timer/settings/autosave";
 const editor = ".cm-content[contenteditable=true]";
@@ -256,6 +259,10 @@ export async function renameReconciliation(f, scenarios = [
 }
 
 export async function autosaveTimer(f) {
+  const { headers } = await nativeFixtureAdmin(f.server);
+  const actor = f.server.fixtureIdentity.people[0];
+  const originalApi = f.api;
+  f = { ...f, api: (path, method, body) => originalApi(path, method, body, path === settingsRoute ? headers : {}) };
   const results = [], times = new Map();
   const release = f.page.onEvent(event => {
     if (event.method === "Network.requestWillBeSent" && event.params.request.method === "PATCH") times.set(event.params.requestId, Date.now());
@@ -278,7 +285,8 @@ export async function autosaveTimer(f) {
     // Explicit normal save resolves this fixture's unsaved work before settings.
     await f.page.button("Save", ".content-column"); await disk(f, "readme", offText); await exit(f);
 
-    await f.page.click('[title="Open sidebar"]');
+    await signInNative(f.session, f.server, actor, { returnPath: "/readme" });
+    await showSidebar(f.page);
     await f.page.click('[aria-label="Settings"]');
     await f.page.click('[data-settings-nav-id="plugin:globnotes-autosave-timer"]');
     await f.page.poll("document.querySelector('[data-settings-content]')?.dataset.settingsCurrentPage==='plugin:globnotes-autosave-timer:autosave' && document.querySelector('#settings-field-enabled')?.disabled===false");

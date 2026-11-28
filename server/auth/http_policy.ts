@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { HttpError } from "@pathfinder/pathfinder";
+import { AdmissionRefusal } from "./admission_refusal.ts";
+import { AccessLoginConflict } from "./access_login_conflict.ts";
 import { createOwnershipScope } from "../../shared/ownership.js";
 import { logger } from "../logger.ts";
 import type {
@@ -8,6 +10,50 @@ import type {
   VaultAuthorityLease,
 } from "./authority.ts";
 import type { createInstanceAuth } from "./middleware.ts";
+import { StoredConfigConflict } from "../config/file_store.ts";
+import { IdentityRecoveryError } from "./bootstrap.ts";
+import { CredentialInputError, IdentityStateError } from "./records.ts";
+import { AuthenticationError } from "./sessions.ts";
+
+/** Prepared owners issue response bodies; only translate their safe failures. */
+export function identityHttp<
+  Input,
+  Output extends Response | Promise<Response>,
+>(handle: (input: Input) => Output) {
+  return async (input: Input): Promise<Response> => {
+    try {
+      return await handle(input);
+    } catch (error) {
+      if (error instanceof AuthenticationError) {
+        return new AdmissionRefusal("credentials_refused").response();
+      }
+      if (error instanceof AdmissionRefusal) return error.response();
+      if (error instanceof AccessLoginConflict) return error.response();
+      if (error instanceof StoredConfigConflict) {
+        throw new HttpError(
+          409,
+          "Account or vault access changed; read current state before retrying.",
+        );
+      }
+      if (error instanceof CredentialInputError) {
+        throw new HttpError(
+          422,
+          "Check the new password or authenticator confirmation.",
+        );
+      }
+      if (
+        error instanceof IdentityStateError ||
+        error instanceof IdentityRecoveryError
+      ) {
+        throw new HttpError(
+          503,
+          "Account state requires offline operator recovery.",
+        );
+      }
+      throw error;
+    }
+  };
+}
 
 export const HTTP_OPERATIONS = [
   "public",
@@ -51,6 +97,17 @@ export function discloseAtDelivery<T>(
 }
 
 /** JSON whose wire body is decided in the consumer pull, not on construction. */
+export function deliveryJsonBody(
+  value: () => unknown,
+): ReadableStream<Uint8Array> {
+  return new ReadableStream<Uint8Array>({
+    pull(controller) {
+      controller.enqueue(new TextEncoder().encode(JSON.stringify(value())));
+      controller.close();
+    },
+  }, { highWaterMark: 0 });
+}
+
 export function deliveryJson(
   value: () => unknown,
   init?: ResponseInit,
@@ -60,12 +117,7 @@ export function deliveryJson(
   headers.set("cache-control", "no-store");
   headers.delete("content-length");
   return new Response(
-    new ReadableStream<Uint8Array>({
-      pull(controller) {
-        controller.enqueue(new TextEncoder().encode(JSON.stringify(value())));
-        controller.close();
-      },
-    }, { highWaterMark: 0 }),
+    deliveryJsonBody(value),
     { ...init, headers },
   );
 }
@@ -93,9 +145,19 @@ export function committedWithPrivateJson<T, R>(
   init?: ResponseInit,
 ): Response {
   if (!lease) return Response.json(value, init);
+  return outcomeWithPrivateJson(lease, value, receipt, init);
+}
+
+/** The safe outcome belongs to the originating response, not its live data. */
+export function outcomeWithPrivateJson<T, R>(
+  lease: HttpLease,
+  value: T,
+  fallback: R,
+  init?: ResponseInit,
+): Response {
   return ownOutcomeResponse(
     deliveryJson(
-      () => discloseAtDelivery<T | R>(lease, value, () => receipt),
+      () => discloseAtDelivery<T | R>(lease, value, () => fallback),
       init,
     ),
   );

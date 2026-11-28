@@ -77,13 +77,12 @@ import { conflictsTarget } from "../conflictNavigation.js";
 import ConflictComparison from "../components/ConflictComparison.vue";
 import ConfirmModal from "../components/ConfirmModal.vue";
 import { useGlobalStore } from "../globalStore.js";
-import { authTypes } from "../constants.js";
 const props = defineProps({ id: String });
 const inbox = inject(CONFLICT_INBOX);
 const router = useRouter();
 const globalStore = useGlobalStore();
 const controller = createConflictResolutionController({ inbox, navigate: target => router.push(target),
-  getContext: () => ({ writable: globalStore.config.authType !== authTypes.readOnly }) });
+  getContext: () => ({ writable: globalStore.config.capabilities?.canEdit === true }) });
 const comparison = controller.state, list = inbox.state;
 watch(() => props.id, controller.select);
 watch(() => list.generation, () => { controller.contextChanged(); controller.select(list.available ? props.id : null); });

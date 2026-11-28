@@ -106,6 +106,19 @@ it("public-note dialog uses the same form without another password-page heading"
   const w = render(IdentityLoginForm, controller, { dialog: true }); expect(w.findAll('h1')).toHaveLength(0);
   expect(w.findAll('input').map(n => n.attributes('id'))).toEqual(["identity-login-name", "identity-login-password", undefined]);
 });
+it.each([false, true])("sign-in preserves the password reveal control (dialog=%s)", async dialog => {
+  const controller = { state: { step: "password", password: "fixture-password" }, submit: vi.fn(), setField: vi.fn(), dispose: vi.fn() };
+  const w = render(IdentityLoginForm, controller, { dialog });
+  const input = w.get('#identity-login-password');
+  const eye = w.get('button[aria-controls="identity-login-password"]');
+  const read = () => [input.attributes('type'), input.element.value, eye.attributes('aria-label')];
+  expect(read()).toEqual(['password', 'fixture-password', 'Show password']);
+  await eye.trigger('click');
+  expect(read()).toEqual(['text', 'fixture-password', 'Hide password']);
+  await eye.trigger('click');
+  expect(read()).toEqual(['password', 'fixture-password', 'Show password']);
+  expect(controller.submit.mock.calls).toEqual([]);
+});
 it("password eye preserves input attributes and keyboard-operable visibility", async () => {
   const w = mount(PasswordField, { props: { id: "password", modelValue: "secret" }, attrs: { autocomplete: "new-password", required: true } }); wrappers.push(w);
   expect([w.find('input').attributes('autocomplete'), w.find('input').attributes('type')]).toEqual(["new-password", "password"]);

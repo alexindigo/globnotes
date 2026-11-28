@@ -8,7 +8,7 @@
  * imported module cannot be unimported, so every generation owns and
  * disposes its resources. */
 
-import { readonly, ref } from "vue";
+import { computed, readonly, ref, shallowRef } from "vue";
 import { createUuid } from "../shared/uuid.ts";
 
 import { getPluginHostCatalog, openPluginHostEvents } from "./api.js";
@@ -16,7 +16,7 @@ import { removeCommandOwner } from "./commands.js";
 import { createPluginSdk } from "./pluginSdk.js";
 import { getStoredToken } from "./tokenStorage.js";
 import { readPathPrefix } from "./pathPrefix.js";
-import { connectionLifetime, createConnectionLifetime } from "./connectionLifetime.js";
+import { createConnectionLifetime } from "./connectionLifetime.js";
 
 const pathPrefix = readPathPrefix();
 
@@ -241,12 +241,16 @@ export function createPluginRuntime({
     captureOwnership, acknowledgePolicy, suspendDocument: lifetime.suspendDocument, resumeDocument: lifetime.resumeDocument });
 }
 
-const runtime = createPluginRuntime({ lifetime: connectionLifetime });
+const activeRuntime = shallowRef(null);
+export function bindPluginRuntime(runtime) {
+  activeRuntime.value = runtime;
+  return () => { if (activeRuntime.value === runtime) activeRuntime.value = null; };
+}
 /** Read-only reactive projections; only refresh publishes authoritative data. */
-export const pluginCatalog = runtime.catalog;
-export const browserGenerations = runtime.browserGenerations;
-export const startPluginRuntime = session => runtime.start(session);
-export const stopPluginRuntime = () => runtime.stop();
-export const refreshPluginRuntimeCatalog = options => runtime.refresh(options);
-export const capturePluginCatalogOwnership = () => runtime.captureOwnership();
-export const acknowledgePluginPolicy = (policy, owner) => runtime.acknowledgePolicy(policy, owner);
+export const pluginCatalog = computed(() => activeRuntime.value?.catalog.value ?? null);
+export const browserGenerations = computed(() => activeRuntime.value?.browserGenerations.value ?? {});
+export const startPluginRuntime = session => activeRuntime.value?.start(session);
+export const stopPluginRuntime = () => activeRuntime.value?.stop();
+export const refreshPluginRuntimeCatalog = async options => await activeRuntime.value?.refresh(options);
+export const capturePluginCatalogOwnership = () => activeRuntime.value?.captureOwnership();
+export const acknowledgePluginPolicy = (policy, owner) => activeRuntime.value?.acknowledgePolicy(policy, owner);

@@ -51,13 +51,13 @@
           </p>
           <p class="mb-6 max-w-96 text-center text-sm text-theme-text-muted">
             Your notes vault is currently empty. Add existing notes to the vault{{
-              canCreateNote(globalStore.config.authType)
+              canCreateNote(globalStore.config)
                 ? ", or create your first note here"
                 : ""
             }}.
           </p>
           <RouterLink
-            v-if="canCreateNote(globalStore.config.authType)"
+            v-if="canCreateNote(globalStore.config)"
             :to="{ name: 'new' }"
           >
             <CtaButton label="Create new note" />

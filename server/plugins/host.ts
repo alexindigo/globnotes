@@ -141,6 +141,8 @@ export interface InvocationOptions {
   lane?: "versioning";
   /** Host-only synchronous disclosure at actual dispatch, after FIFO waits. */
   prepareArgs?(): unknown[];
+  /** Request-only authority; retained callback viewer rights are separate. */
+  requestDispatch?: { assertCurrent(): void; posted(): void };
   /** Host-owned startup work, never supplied by a Worker or viewer. */
   serviceJob?: string;
 }
@@ -1866,6 +1868,7 @@ export class PluginHost {
       args = structuredClone(args);
       viewer?.assertCurrent();
       assertRegistration();
+      job.invocation?.requestDispatch?.assertCurrent();
     } catch (error) {
       job.timer();
       job.reject(
@@ -1919,6 +1922,7 @@ export class PluginHost {
       ? { type: "dispose", ...common }
       : { type: "call", ...common, fn: job.name, args };
     slot.worker.postMessage(message);
+    job.invocation?.requestDispatch?.posted();
   }
   /** FIFO broadcast reserves every replica's sync boundary before later renders. */
   async syncAll(viewer?: ViewerAuthority): Promise<void> {

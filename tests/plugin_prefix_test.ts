@@ -7,6 +7,7 @@ import { publicScenario } from "./helpers/fixture_scenarios.ts";
 
 import { assertEquals } from "@std/assert";
 import { bootServer } from "./helpers/boot.ts";
+import { fixtureAdmin } from "./helpers/fixture_http.ts";
 import { pluginFixture } from "./helpers/plugin_fixture.ts";
 import { catalogPluginReady } from "./helpers/plugin_ready.ts";
 import { done, pending, waitUntil } from "./helpers/wait.ts";
@@ -37,7 +38,11 @@ Deno.test("prefix: segment boundaries, retained queries and protected plugin rou
       await searched.body?.cancel();
 
       // Plugin endpoints under the prefix keep their query data.
-      await catalogPluginReady(server, "ep", { prefix: "/notes" });
+      const admin = await fixtureAdmin(server, "/notes");
+      await catalogPluginReady(server, "ep", {
+        prefix: "/notes",
+        headers: admin.headers,
+      });
       const pluginRes = await waitUntil(async (signal) => {
         const res = await fetch(
           `${server.baseUrl}/notes/_/api/plugins/ep/item/a%20b?x=1`,

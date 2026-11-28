@@ -25,6 +25,7 @@ import {
 } from "./helpers/mcp.ts";
 import { pluginFixture } from "./helpers/plugin_fixture.ts";
 import { catalogPluginReady } from "./helpers/plugin_ready.ts";
+import { fixtureAdmin } from "./helpers/fixture_http.ts";
 import { done, pending, waitUntil } from "./helpers/wait.ts";
 
 const ALL_TOOLS = [
@@ -381,8 +382,8 @@ Deno.test("mcp endpoint: password mode needs the API token", async () => {
   });
   try {
     const anonymous = await post(server);
-    assertEquals(anonymous.status, 401);
-    assertEquals(anonymous.headers.get("www-authenticate"), "Bearer");
+    assertEquals(anonymous.status, 403);
+    assertEquals(anonymous.headers.get("www-authenticate"), null);
     await anonymous.body?.cancel();
     const forged = await post(server, { authorization: "Bearer nope" });
     assertEquals(forged.status, 401);
@@ -508,7 +509,9 @@ Deno.test("mcp endpoint: a plugin pre-save guard cancels an MCP write", async ()
       fixtureScenario: publicScenario(),
     });
     try {
-      await catalogPluginReady(server, "guard");
+      await catalogPluginReady(server, "guard", {
+        headers: (await fixtureAdmin(server)).headers,
+      });
       const client = await connect(server);
       try {
         const blocked = await client.callTool({
@@ -572,7 +575,9 @@ Deno.test("mcp endpoint: plugin guards cancel MCP creates, renames and deletes",
       fixtureScenario: publicScenario(),
     });
     try {
-      await catalogPluginReady(server, "guard");
+      await catalogPluginReady(server, "guard", {
+        headers: (await fixtureAdmin(server)).headers,
+      });
       const client = await connect(server);
       try {
         for (

@@ -25,7 +25,7 @@ import {
   type McpRequestContext,
   WebStandardStreamableHTTPServerTransport,
 } from "@modelcontextprotocol/server";
-import { enforceReadAuth, noteMutationLease } from "../auth/middleware.ts";
+import { activeAuth, noteMutationLease } from "../auth/middleware.ts";
 import { logger } from "../logger.ts";
 import type { NoteMutationLease } from "../plugins/lifecycle.ts";
 import { state } from "../state.ts";
@@ -64,7 +64,10 @@ export interface McpEndpointAdapters {
 export const stateEndpointAdapters: McpEndpointAdapters = {
   vault: stateVault,
   writable: () => state.lifecycle?.writable() ?? false,
-  authenticateRead: enforceReadAuth,
+  async authenticateRead(request) {
+    const { principal } = await activeAuth().readLease(request);
+    return principal.kind === "account" ? principal.accountId : null;
+  },
   lease: noteMutationLease,
   version: () => (state.version && formatVersion(state.version)) || "dev",
   rateLimiter: null,

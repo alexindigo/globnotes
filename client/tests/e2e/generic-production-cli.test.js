@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { accessMenuConsumers, collectProductionRows } from "./generic-platform-evidence.mjs";
+import { accessMenuConsumers, collectProductionRows, prefixStreamConsumers } from "./generic-platform-evidence.mjs";
 import { MATRIX_CASES, collectFixtureReports, retainFixtureReport } from "./native-fixture-cases.mjs";
 
 describe("production acceptance rejects incomplete consumer evidence", () => {
@@ -45,19 +45,37 @@ describe("production acceptance rejects incomplete consumer evidence", () => {
     await expect(collectFixtureReports("settings-ui", async () => ({ report: { outcomes: [{ name: "duplicate", passed: true }] } }))).rejects.toThrow("duplicate");
   });
   const accessOutcomes = [
-    { name: "native enrolment cancellation/invalid-code/confirmed-login consumer", passed: true },
-    { name: "native stored Access controls and fresh-proof errors retain account/editor authority", passed: true },
+    { name: "totp-in-place", passed: true },
+    { name: "pinned-credentials", passed: true },
   ];
-  const credentials = { retiredFieldsUnpinned: true, invalidCurrentProofRetainedConfigAndSession: true, directUnconfirmedWriteRejected: true, sameEditor: true, pageErrors: [] };
-  it("requires current stored-credential/fresh-proof effects rather than the retired pin label", () => {
-    expect(accessMenuConsumers(accessOutcomes, credentials)).toBe(true);
-    for (const key of ["retiredFieldsUnpinned", "invalidCurrentProofRetainedConfigAndSession", "directUnconfirmedWriteRejected", "sameEditor"]) {
-      expect(accessMenuConsumers(accessOutcomes, { ...credentials, [key]: false })).toBe(false);
+  const enrollment = { name: "totp-in-place", enrollmentCancelNoEffects: true, literalDirtyBufferRetained: true, savedNote: true, invalidEnrollmentRetainedAccountAndSession: true, confirmedTotp: true, revocation: true, confirmedLoginAccepted: true, pageErrors: [] };
+  const credentials = { name: "pinned-credentials", declarationStatic: true, ordinarySiblingSaved: true, adminStillEffective: true, ownCredentialControlsEditable: true, invalidCurrentProofRetainedBytesAndSession: true, directUnconfirmedWriteRejected: true, sameEditor: true, pageErrors: [] };
+  it("requires the actual v3 enrollment, Access and Own Account effects, not just passed leaf labels", () => {
+    expect(accessMenuConsumers(accessOutcomes, enrollment, credentials)).toBe(true);
+    for (const [subject, record] of [["enrollment", enrollment], ["credentials", credentials]]) {
+      for (const [key, value] of Object.entries(record)) {
+        const missing = { ...record, [key]: value === true ? false : key === "pageErrors" ? ["failed"] : "wrong-leaf" };
+        expect(accessMenuConsumers(accessOutcomes, subject === "enrollment" ? missing : enrollment, subject === "credentials" ? missing : credentials)).toBe(false);
+      }
     }
-    expect(accessMenuConsumers(accessOutcomes, { ...credentials, pageErrors: ["failed"] })).toBe(false);
-    expect(accessMenuConsumers(accessOutcomes.slice(1), credentials)).toBe(false);
-    expect(accessMenuConsumers([{ ...accessOutcomes[0], passed: false }, accessOutcomes[1]], credentials)).toBe(false);
-    expect(accessMenuConsumers([accessOutcomes[0], { name: "native pinned Access controls", passed: true }], credentials)).toBe(false);
+    expect(accessMenuConsumers(accessOutcomes.slice(1), enrollment, credentials)).toBe(false);
+    expect(accessMenuConsumers([{ ...accessOutcomes[0], passed: false }, accessOutcomes[1]], enrollment, credentials)).toBe(false);
+    expect(accessMenuConsumers([accessOutcomes[0], { name: "native pinned Access controls", passed: true }], enrollment, credentials)).toBe(false);
+  });
+  it("requires stream closure without private delivery, credential rejection and actual browser recovery", () => {
+    const closed = { closed: true, closedAt: 101, text: "event: hello\ndata: {}\n\n" };
+    const receipt = { expiry: 100, expiryStream: closed, securityTransitionStream: closed, expiryNoLaterPrivateEvent: true, transitionNoLaterPrivateEvent: true, expiredReconnectStatus: 401, oldCredentialStatuses: [401, 401, 401], bothNativeBrowserOwnersDisposed: true, freshNativeLogin: true };
+    expect(prefixStreamConsumers(receipt)).toBe(true);
+    for (const key of ["expiryNoLaterPrivateEvent", "transitionNoLaterPrivateEvent", "bothNativeBrowserOwnersDisposed", "freshNativeLogin"]) {
+      expect(prefixStreamConsumers({ ...receipt, [key]: false })).toBe(false);
+    }
+    for (const key of ["expiryStream", "securityTransitionStream"]) {
+      expect(prefixStreamConsumers({ ...receipt, [key]: { ...closed, closed: false } })).toBe(false);
+      expect(prefixStreamConsumers({ ...receipt, [key]: { ...closed, text: closed.text + "event: invalidate\n\n" } })).toBe(false);
+    }
+    expect(prefixStreamConsumers({ ...receipt, expiry: 102 })).toBe(false);
+    expect(prefixStreamConsumers({ ...receipt, expiredReconnectStatus: 200 })).toBe(false);
+    expect(prefixStreamConsumers({ ...receipt, oldCredentialStatuses: [200, 401, 401] })).toBe(false);
   });
   it("never treats an empty successful diagnostics marker as the full Settings matrix", async () => {
     await expect(collectProductionRows(async () => ({ outcomes: [] }))).rejects.toThrow("Full native Settings matrix incomplete");

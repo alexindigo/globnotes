@@ -7,7 +7,7 @@ import {
   signedInScenario,
   storedScenario,
 } from "./helpers/fixture_scenarios.ts";
-import { fixturePasswordHash, GlobalConfig } from "./helpers/config.ts";
+import { GlobalConfig } from "./helpers/config.ts";
 import { testEnvironment } from "./helpers/environment.ts";
 import { fixtureScope } from "./helpers/fixture_scope.ts";
 import { fixtureLayout } from "./helpers/fixture_layout.ts";
@@ -24,9 +24,7 @@ for (const everybody of ["edit", "view"] as const) {
       const scenario = publicScenario(everybody);
       const env = testEnvironment({ fixtureScenario: scenario });
       assertEquals(env.values, {});
-      assertEquals(env.fixtureAuth, {
-        auth_type: everybody === "edit" ? "none" : "read_only",
-      });
+      assertEquals(env.fixtureIdentity?.everybody, everybody);
       const layout = await fixtureLayout(scope, {});
       const records = await prepareIdentityBoot(
         layout,
@@ -52,15 +50,13 @@ Deno.test("fixture scenarios: named password and explicit None preserve actual s
     const scenario = signedInScenario(
       { login: "agent", password: "correct horse" },
       { level: "edit" },
-      { secret_key: "legacy-fixture-key" },
     );
     const env = testEnvironment({ fixtureScenario: scenario });
-    assertEquals(env.fixtureAuth, {
-      auth_type: "password",
-      username: "agent",
-      password_hash: fixturePasswordHash("correct horse"),
-      secret_key: "legacy-fixture-key",
-    });
+    assertEquals(env.values, {});
+    assertEquals(env.fixtureIdentity?.people, [{
+      login: "agent",
+      password: "correct horse",
+    }]);
     const layout = await fixtureLayout(scope, {});
     const records = await prepareIdentityBoot(
       layout,
@@ -85,7 +81,7 @@ Deno.test("fixture scenarios: named password and explicit None preserve actual s
     ], ["edit", "none"]);
   }));
 
-Deno.test("fixture scenarios: named identity, grant and legacy credentials derive from the same person snapshot", () => {
+Deno.test("fixture scenarios: named identity and grant derive from the same person snapshot", () => {
   let loginReads = 0;
   const scenario = signedInScenario(
     {
@@ -96,9 +92,8 @@ Deno.test("fixture scenarios: named identity, grant and legacy credentials deriv
       totpKey: "historical-raw-key",
     },
     { level: "edit" },
-    { secret_key: "legacy-fixture-key" },
   );
-  assertEquals([loginReads, scenario.identity, scenario.legacyAuth], [
+  assertEquals([loginReads, scenario.identity], [
     1,
     {
       vaultId: publicScenario().identity!.vaultId,
@@ -110,17 +105,10 @@ Deno.test("fixture scenarios: named identity, grant and legacy credentials deriv
       }],
       grants: { alice: "edit" },
     },
-    {
-      auth_type: "totp",
-      username: "alice",
-      password_hash: fixturePasswordHash("password"),
-      totp_key: "historical-raw-key",
-      secret_key: "legacy-fixture-key",
-    },
   ]);
 });
 
-Deno.test("fixture scenarios: default named credentials issue a usable token on a fresh legacy boot", () =>
+Deno.test("fixture scenarios: default named credentials issue a usable token on a fresh account boot", () =>
   fixtureScope(async (scope) => {
     const layout = await fixtureLayout(scope, {});
     const scenario = signedInScenario({ login: "alice", password: "password" });
@@ -140,7 +128,8 @@ Deno.test("fixture scenarios: default named credentials issue a usable token on 
     const check = await fetch(`${server.baseUrl}/_/api/auth-check`, {
       headers: { authorization: `Bearer ${access_token}` },
     });
-    assertEquals([check.status, await check.json()], [200, "OK"]);
+    const status = await check.json();
+    assertEquals([check.status, status.principal?.login], [200, "alice"]);
   }));
 
 Deno.test("fixture scenarios: authenticator representation, temporary password and distinct named grants survive capture", () => {
@@ -179,30 +168,19 @@ Deno.test("fixture scenarios: authenticator representation, temporary password a
     grants: { "old-key": "none", "new-key": "view" },
   });
   assertEquals(
-    signedInScenario(
-      {
-        login: "old-key",
-        password: "password",
-        totpKey: "historical-raw-key",
-      },
-      {},
-      { secret_key: "legacy-fixture-key" },
-    ).legacyAuth,
-    {
-      auth_type: "totp",
-      username: "old-key",
-      password_hash: fixturePasswordHash("password"),
-      totp_key: "historical-raw-key",
-      secret_key: "legacy-fixture-key",
-    },
+    signedInScenario({
+      login: "old-key",
+      password: "password",
+      totpKey: "historical-raw-key",
+    }).identity?.people[0].totpKey,
+    "historical-raw-key",
   );
 });
 
 Deno.test("fixture scenarios: setup has neither a fabricated account nor a serialized auth record", () => {
   const env = testEnvironment({ fixtureScenario: setupScenario() });
-  assertEquals([env.fixtureIdentity, env.fixtureAuth, env.values], [
+  assertEquals([env.fixtureIdentity, env.values], [
     null,
-    undefined,
     {},
   ]);
   assertThrows(
@@ -211,8 +189,8 @@ Deno.test("fixture scenarios: setup has neither a fabricated account nor a seria
         fixtureScenario: publicScenario(),
         fixtureAuth: { auth_type: "password" },
       }),
-    TypeError,
-    "Use one fixture scenario, not a second auth override.",
+    Error,
+    "Fixture env fixtureAuth must be text",
   );
 });
 
@@ -242,25 +220,26 @@ Deno.test("fixture scenarios: environment captures scenario getters once and con
       env.fixtureScenario!.identity!.everybody = "edit";
     }, TypeError);
     assertThrows(() => {
-      env.fixtureAuth!.auth_type = "none";
+      env.fixtureIdentity!.people[0].login = "other";
     }, TypeError);
     assertThrows(() => {
       config.fixtureIdentity!.grants = {};
     }, TypeError);
-    assertEquals([env.fixtureIdentity!.everybody, env.fixtureAuth!.auth_type], [
+    assertEquals([
+      env.fixtureIdentity!.everybody,
+      env.fixtureIdentity!.people[0].login,
+    ], [
       "view",
-      "read_only",
+      "alice",
     ]);
     assertEquals(config.fixtureIdentity!.everybody, "view");
-    assertEquals([config.authType, config.setupRequired], ["read_only", false]);
   }));
 
-Deno.test("fixture scenarios: boot captures account input beside unchanged public note writes and legacy bytes on reopen", () =>
+Deno.test("fixture scenarios: boot captures account input and preserves public writes and exact persisted identity on reopen", () =>
   fixtureScope(async (scope) => {
     const layout = await fixtureLayout(scope, {}), scenario = publicScenario();
     const starting = bootServer({ fixtureScenario: scenario }, { layout });
     scenario.identity!.everybody = "view";
-    scenario.legacyAuth!.auth_type = "read_only";
     const server = (await scope.acquire(() =>
       starting, (server) => server.close())).value;
     assertEquals(server.fixtureIdentity!.everybody, "edit");
@@ -278,31 +257,26 @@ Deno.test("fixture scenarios: boot captures account input beside unchanged publi
       await Deno.readTextFile(`${server.vault}/Scenario.md`),
       "retained original note",
     );
-    const bytes = await Deno.readTextFile(`${layout.metadata}/config.json`);
-    assertEquals(JSON.parse(bytes), { auth_type: "none" });
     const instance = instanceMetadataPath(
       layout.instance,
       layout.environment.GLOBNOTES__METADATA_PATH ?? "",
     );
-    const assertNoIdentity = () => {
-      for (
-        const filename of [
-          `${instance}/accounts.json`,
-          `${instance}/sessions.json`,
-          `${layout.metadata}/access.json`,
-        ]
-      ) {
-        assertThrows(
-          () => Deno.statSync(filename),
-          Deno.errors.NotFound,
-          "No such file",
-        );
-      }
-    };
-    assertNoIdentity();
+    const acl = `${layout.metadata}/access.json`;
+    const accounts = `${instance}/accounts.json`;
+    const signing = `${instance}/sessions.json`;
+    const bytes = await Deno.readTextFile(acl);
+    const accountBytes = await Deno.readTextFile(accounts);
+    const signingBytes = await Deno.readTextFile(signing);
+    assertEquals(JSON.parse(bytes).everybody, "edit");
+    assertThrows(
+      () => Deno.statSync(`${layout.metadata}/config.json`),
+      Deno.errors.NotFound,
+      "No such file",
+    );
     await server.close();
-    const replacement = '{"auth_type":"read_only"}\n';
-    await Deno.writeTextFile(`${layout.metadata}/config.json`, replacement);
+    const replacement =
+      JSON.stringify({ ...JSON.parse(bytes), everybody: "view" }) + "\n";
+    await Deno.writeTextFile(acl, replacement);
     const reopened = (await scope.acquire(() =>
       bootServer({ fixtureScenario: storedScenario(publicScenario()) }, {
         layout,
@@ -310,15 +284,18 @@ Deno.test("fixture scenarios: boot captures account input beside unchanged publi
       server.close())).value;
     assertEquals(reopened.fixtureIdentity, publicScenario().identity);
     assertEquals(
-      await Deno.readTextFile(`${layout.metadata}/config.json`),
+      await Deno.readTextFile(acl),
       replacement,
     );
-    assertNoIdentity();
     const current = await fetch(`${reopened.baseUrl}/_/api/config`);
-    assertEquals([current.status, (await current.json()).authType], [
+    const { capabilities } = await current.json();
+    assertEquals([current.status, capabilities.canRead, capabilities.canEdit], [
       200,
-      "read_only",
+      true,
+      false,
     ]);
+    assertEquals(await Deno.readTextFile(accounts), accountBytes);
+    assertEquals(await Deno.readTextFile(signing), signingBytes);
     const note = await fetch(`${reopened.baseUrl}/_/api/notes/Scenario`);
     assertEquals(note.status, 200);
     assertEquals((await note.json()).content, "retained original note");

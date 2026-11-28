@@ -4,9 +4,10 @@ import type { PathfinderRequest } from "@pathfinder/pathfinder";
 import { PluginContractError } from "@server/plugins/contracts.ts";
 import { state } from "@server/state.ts";
 import { settingsWriteGuard } from "@server/auth/middleware.ts";
+import { deliverAdmissionRefusals } from "@server/auth/admission_refusal.ts";
 import { readPermissionBody } from "../../../permissions/put.ts";
 
-export default async function (request: PathfinderRequest) {
+export default deliverAdmissionRefusals(async (request: PathfinderRequest) => {
   const guard = await settingsWriteGuard(request._raw);
   try {
     return await state.pluginNetwork!.controls(
@@ -23,4 +24,4 @@ export default async function (request: PathfinderRequest) {
     }
     throw error;
   }
-}
+});

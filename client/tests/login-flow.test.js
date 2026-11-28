@@ -1,29 +1,24 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { createLoginFlow, loginError } from "../loginFlow.js";
-import { apiErrorHandler, getToken } from "../api.js";
-import { storeToken } from "../tokenStorage.js";
-import { authTypes } from "../constants.js";
+import { createIdentityLoginFlow, loginError } from "../loginFlow.js";
+import { apiErrorHandler } from "../api.js";
 
-vi.mock("../api.js", () => ({ getToken: vi.fn(), apiErrorHandler: vi.fn() }));
-vi.mock("../tokenStorage.js", () => ({ storeToken: vi.fn() }));
+vi.mock("../api.js", () => ({ apiErrorHandler: vi.fn() }));
+const getToken = vi.fn(), storeToken = vi.fn();
 
 function setup(overrides = {}) {
   const fields = { username: "user", password: "secret", totp: "123456", rememberMe: false };
   const clearCredentials = vi.fn(() => Object.assign(fields, { username: "", password: "", totp: "" }));
-  const adapters = { credentials: () => fields, clearCredentials, redirect: () => undefined, navigate: vi.fn(), toast: { add: vi.fn() }, ...overrides };
-  return { flow: createLoginFlow(adapters), fields, ...adapters };
+  const { requestToken = getToken, persistToken = storeToken, ...rest } = overrides;
+  const session = { transport: { getToken: requestToken }, acceptToken: persistToken, beforeSignIn: async () => true,
+    snapshot: () => ({ capabilities: { canRead: true } }),
+    capture: () => () => true, signIn: async () => ({ principal: { kind: "account" }, current: () => true }) };
+  const adapters = { session, credentials: () => fields, clearCredentials, clearAccepted() {}, redirect: () => undefined, navigate: vi.fn(), toast: { add: vi.fn() }, ...rest };
+  return { flow: createIdentityLoginFlow(adapters), fields, ...adapters };
 }
 
 describe("login flow", () => {
   beforeEach(() => vi.clearAllMocks());
-
-  it.each(Object.values(authTypes))("redirects immediately only when auth is disabled (%s)", (type) => {
-    const s = setup();
-    s.flow.init(type);
-    expect(s.navigate.mock.calls).toEqual(type === authTypes.none ? [[{ name: "home" }]] : []);
-    expect(getToken).not.toHaveBeenCalled();
-  });
 
   it("persists the token before the default home navigation", async () => {
     const order = [];
@@ -42,10 +37,10 @@ describe("login flow", () => {
     request.resolve("token"); await first;
     expect(order).toEqual(["store", "authenticated"]); expect(s.navigate).not.toHaveBeenCalled();
   });
-  it("keeps internal token acceptance out of the just-proven credential handoff", async () => {
+  it("keeps credentials private when notifying an ordinary dialog of sign-in", async () => {
     const authenticated = vi.fn(), s = setup({ requestToken: async () => "token", persistToken() {}, authenticated });
     await s.flow.logIn();
-    expect(authenticated.mock.calls).toEqual([[{ username: "user", password: "secret" }]]);
+    expect(authenticated.mock.calls).toEqual([[]]);
     await s.flow.dispose();
   });
 

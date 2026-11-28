@@ -9,6 +9,12 @@ import { createVaultChanges } from "./vaultChanges.js";
 import { createOwnershipScope } from "../shared/ownership.js";
 import { hasUnsavedWork, resolveParticipants } from "./sessionActions.js";
 import { getToastOptions } from "./helpers.js";
+import { connectionLifetime } from "./connectionLifetime.js";
+import { createIdentityLoginState } from "./loginFlow.js";
+import { matchReauthentication } from "./reauthentication.js";
+import { canCreateNote } from "./noteCreation.js";
+
+export const IDENTITY_APPLICATION = Symbol("identity application");
 
 /** Injection seam for I14c. Constructing this factory installs no global
  * transport, route or active application. All workflows stay in plain modules. */
@@ -25,14 +31,16 @@ export function createIdentityApplication({ config, setConfig, tokens, transport
     setChangesSession: key => changes?.setSession(key), setBrowseSession: key => index?.setSession(key),
     refreshNotes: () => { void index.refresh(); }, recover: task => changes.revalidate(task) });
   custody.defer(async () => { (await session.dispose()).throwIfFailed(); });
+  const hasLiveConfig = computed(() => session.key() != null);
   const io = session.transport;
   index = createIdentityNoteIndex({ ...indexAdapters, store, sessionKey: session.key,
     canRead: () => session.key() != null && config().capabilities?.canRead === true, read: () => io.read("note-index") });
   custody.defer(async () => { (await index.dispose()).throwIfFailed(); });
-  runtime = createIdentityPluginRuntime({ ...runtimeAdapters, sessionKey: session.key,
+  runtime = createIdentityPluginRuntime({ lifetime: connectionLifetime, ...runtimeAdapters, sessionKey: session.key,
     readCatalog: () => io.read("plugin-host"), openEvents: options => io.openPluginHostEvents(options) });
   custody.defer(runtime.stop);
-  changes = createVaultChanges({ ...changesAdapters, sessionKey: session.key, open: options => io.openVaultChanges(options) });
+  changes = createVaultChanges({ lifetime: connectionLifetime, ...changesAdapters, sessionKey: session.key,
+    open: options => io.openVaultChanges(options) });
   custody.defer(async () => { const report = await changes.dispose(); if (report.errors.length) throw new AggregateError(report.errors, "Vault changes cleanup failed"); });
   const setup = createIdentitySetupFormState({ ...setupAdapters,
     beforeCommit: async () => await resolve("finishing setup") === "proceed",
@@ -44,7 +52,12 @@ export function createIdentityApplication({ config, setConfig, tokens, transport
   });
   custody.defer(async () => { (await setup.dispose()).throwIfFailed(); });
   return Object.freeze({ session, setup, index, runtime, changes,
-    state: readonly(reactive({ configReady: computed(() => session.state.ready), signInVisible })),
+    state: readonly(reactive({ configReady: computed(() => session.state.ready), hasLiveConfig, signInVisible,
+      noteShell: computed(() => hasLiveConfig.value && config().capabilities?.canRead === true && !["account", "login", "setup"].includes(currentRoute()?.name)) })),
+    createLogin({ redirect, authenticated, isCurrent }) {
+      const recovery = matchReauthentication(authenticated, isCurrent);
+      return createIdentityLoginState({ session, navigate, redirect, authenticated, isCurrent, recovery, toast });
+    },
     createSettings() {
       custody.assertCurrent();
       const controllers = createIdentitySettingsControllers({ session, config, navigate, toast, account, access, confirmDeparture, resolve });
@@ -56,11 +69,19 @@ export function createIdentityApplication({ config, setConfig, tokens, transport
       custody.defer(async () => { (await controller.dispose()).throwIfFailed(); }); return controller;
     },
     // Reader/editor discovery never reads the old Admin manifest endpoint.
-    async readerPlugins() { const catalog = await io.read("plugin-host"); return catalog.plugins.filter(plugin => plugin.enabled).map(({ id, name, version, client }) => ({ id, name, version, client })); },
+    async readerPlugins() {
+      if (session.key() == null || !config().capabilities?.canRead) return [];
+      const current = session.capture();
+      try {
+        const catalog = await io.read("plugin-host");
+        return current() ? catalog.plugins.filter(plugin => plugin.enabled).map(({ id, name, version, client }) => ({ id, name, version, client })) : [];
+      } catch (error) { if (current()) throw error; return []; }
+    },
     openSignIn() { signInVisible.value = true; }, closeSignIn() { signInVisible.value = false; },
     routeChanged(name) { if (["login", "account"].includes(name)) { signInVisible.value = false; setSettingsVisible(false); } },
-    async load() { session.tokens.loadStoredToken?.(); const accepted = await session.load(); if (accepted && session.state.ready) loaded(); return accepted; },
-    refreshConfig: session.refresh, logoutFromSettings: session.logout,
+    async load() { const accepted = await session.load(); if (accepted && session.state.ready) loaded(); return accepted; },
+    newNote() { if (session.state.valid && canCreateNote(config())) return navigate({ name: "new" }); },
+    refreshConfig: session.refreshLive, logoutFromSettings: session.logout,
     dispose() {
       if (closing) return closing;
       closing = Promise.resolve().then(() => custody.releaseAll());

@@ -71,14 +71,6 @@ export const OWNERSHIP_FAMILIES: Record<string, OwnershipFamily> = {
       "tests/native_totp_fixture_test.ts",
     ],
   },
-  "legacy-live-totp-import": {
-    replacement: "A09",
-    consumers: [
-      "tests/access_settings_test.ts",
-      "tests/auth_test.ts",
-      "tests/local_auth_test.ts",
-    ],
-  },
   "record-channel-pilot": {
     replacement: "P11",
     closed: true,
@@ -190,10 +182,6 @@ export const OWNERSHIP_FAMILIES: Record<string, OwnershipFamily> = {
       "tests/plugin_worker_liveness_test.ts",
     ],
   },
-  "native-account": {
-    replacement: "A08",
-    consumers: ["client/tests/e2e/access-settings.mjs"],
-  },
   "native-driver": {
     replacement: "T02/A08",
     consumers: ["client/tests/e2e/generic-plugin-system.mjs"],
@@ -235,10 +223,6 @@ export const OWNERSHIP_FAMILIES: Record<string, OwnershipFamily> = {
   "native-entrypoint": {
     replacement: "A08",
     consumers: ["client/tests/e2e/runner-entrypoint-controls.mjs"],
-  },
-  "native-foundations": {
-    replacement: "A08",
-    consumers: ["client/tests/e2e/settings-foundations.mjs"],
   },
   "native-surfaces": {
     replacement: "A08",

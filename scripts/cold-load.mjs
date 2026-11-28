@@ -3,7 +3,6 @@ const [root, label] = Deno.args;
 if (!root || !label) throw new Error("root and label required");
 const fixture = await Deno.makeTempDir({ prefix: `v22-${label}-cold-` });
 await Deno.mkdir(`${fixture}/globnotes/.globnotes`, { recursive: true });
-await Deno.writeTextFile(`${fixture}/globnotes/.globnotes/config.json`, JSON.stringify({auth_type:"none"}));
 await Deno.writeTextFile(`${fixture}/globnotes/ReleaseProbe.md`, "# Release Probe\n\nCached cold-load fixture.\n");
 const listener = Deno.listen({ hostname: "127.0.0.1", port: 0 });
 const port = listener.addr.port;
@@ -50,6 +49,13 @@ try {
     if (response.status !== 200 || size === 0) throw new Error(`static asset failed: ${path} ${response.status} ${size}`);
     console.log(JSON.stringify({ gate: "static-asset", path, status: response.status, size }));
   }
+  const setup = await fetch(`${baseUrl}/_/api/setup`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ username: "cold-load-owner", password: crypto.randomUUID(), everybody: "view", updateId: crypto.randomUUID() }),
+    signal: AbortSignal.timeout(5000),
+  });
+  const first = await setup.json();
+  if (setup.status !== 200 || first.setupRequired !== false || typeof first.access_token !== "string") throw new Error(`cached cold-load setup failed: ${setup.status}`);
   const note = await fetch(`${baseUrl}/_/api/notes/ReleaseProbe`, { signal: AbortSignal.timeout(5000) });
   const body = await note.json();
   if (note.status !== 200 || !body.content.includes("Cached cold-load fixture.")) throw new Error("fixture note consumer missing content");

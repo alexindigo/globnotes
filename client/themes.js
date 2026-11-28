@@ -380,8 +380,7 @@ const brandAccent = ref(null), systemMode = ref("light");
 
 export function setBrandAccent(accent) {
   brandAccent.value = accent || null;
-  // Re-stamp with the accent folded in (idempotent; re-publishes
-  // theme:change). Clearing restores the theme's own brand.
+  // Re-stamp with the accent folded in. Clearing restores the theme's own brand.
   applyTheme(currentTheme.value);
 }
 
@@ -463,17 +462,19 @@ export function themePreviews() {
   return [{ id:'system', label:'System — follows your device', nowShowing:pair.find(theme => theme.mode === systemMode.value).label, pair }, ...previews];
 }
 
+let publishedTheme;
+
 function applyTheme(id) {
   const resolvedId = resolveThemeId(id);
   const theme = THEMES.find((t) => t.id === resolvedId);
   if (!theme) return;
   const colors = palette(theme);
+  const variables = Object.entries(colors).map(([name, value]) => [
+    `--theme-${name}`, value.startsWith("#") ? hexToRgbTriplet(value) : value,
+  ]);
   const root = document.documentElement;
-  for (const [name, value] of Object.entries(colors)) {
-    root.style.setProperty(
-      `--theme-${name}`,
-      value.startsWith("#") ? hexToRgbTriplet(value) : value,
-    );
+  for (const [name, value] of variables) {
+    root.style.setProperty(name, value);
   }
   // The .dark class drives the handful of class-based overrides.
   document.body.classList.toggle("dark", theme.mode === "dark");
@@ -483,7 +484,13 @@ function applyTheme(id) {
   if (meta) {
     meta.content = colors.background;
   }
-  publish(TOPICS.THEME_CHANGE, { id, resolvedId, mode: theme.mode });
+  // Brand/config refreshes can re-stamp the same theme. Only a different
+  // selection or effective palette should invalidate consumers such as Mermaid.
+  const snapshot = JSON.stringify([id, resolvedId, theme.mode, variables]);
+  if (snapshot !== publishedTheme) {
+    publishedTheme = snapshot;
+    publish(TOPICS.THEME_CHANGE, { id, resolvedId, mode: theme.mode });
+  }
 }
 
 let systemListenerBound = false;

@@ -27,6 +27,16 @@ const CORE_PAGES = [
 /** Page kind belongs to its normalized namespace, not its plugin owner name. */
 export const isPluginSettingsPage = page => page?.id?.startsWith("plugin:") === true;
 
+/** The registry describes scope; only the current projection admits that scope. */
+export function admitsSettingsPage(page, capabilities) {
+  if (!page) return false;
+  if (!isPluginSettingsPage(page)) {
+    if (page.group === "browser") return true;
+    if (page.group === "account") return capabilities?.canManageOwnAccount === true;
+  }
+  return capabilities?.canManageVault === true;
+}
+
 /** Reactive page list: core pages + catalog plugin pages. */
 export const settingsPages = computed(() => {
   const pages = CORE_PAGES.map((page) => ({

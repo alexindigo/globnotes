@@ -1,7 +1,7 @@
 // Feature-owned response gates exercise the real browser/Settings/store chain.
 // No application clock, request helper, or production acknowledgement is mocked.
 import { done, pending, waitUntil } from "../../../tests/helpers/wait.ts";
-export async function exerciseSettingsPending({ session, server, directory }) {
+export async function exerciseSettingsPending({ session, server, directory, headers }) {
   const assert = (condition, message) => { if (!condition) throw Error(message); };
   const path = "/_/api/plugin-host/session-guard/settings/preferences";
   const gate = { next: false, response: null, writes: [] };
@@ -25,7 +25,7 @@ export async function exerciseSettingsPending({ session, server, directory }) {
     assert(!gate.error, gate.error);
   };
   const read = async () => {
-    const response = await fetch(`${server.baseUrl}${path}`, { signal: AbortSignal.timeout(5000) });
+    const response = await fetch(`${server.baseUrl}${path}`, { headers, signal: AbortSignal.timeout(5000) });
     assert(response.ok, "Authoritative Settings read failed");
     return response.json();
   };

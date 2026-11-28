@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { nextTick } from "vue";
 import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
+import { accountProjection } from "./helpers/account-projection.js";
 
 vi.mock("../api.js", async importOriginal => ({
   ...await importOriginal(),
@@ -44,7 +45,7 @@ describe("BrandingSettings reset", () => {
     const pinia = createPinia();
     setActivePinia(pinia);
     const store = useGlobalStore();
-    store.config = { authType:'none', brand: { ...SAMPLE } };
+    store.config = { ...accountProjection(), brand: { ...SAMPLE } };
     wrapper=mount(SettingsModal,{attachTo:document.body,props:{modelValue:true,writable:true},global:{directives:{focus:{mounted:el=>el.focus()}}}});
     await wrapper.vm.openSettings('core:branding');await flushPromises();
     return { app: {unmount:()=>{wrapper.unmount();wrapper=null;}}, store };

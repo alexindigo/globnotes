@@ -1,14 +1,11 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { reactive, readonly, ref } from "vue";
-import { apiErrorHandler, createIdentityApi, getConfig } from "./api.js";
+import { createIdentityApi } from "./api.js";
 import { applyBrandToDocument } from "./brand.js";
-import { authTypes } from "./constants.js";
-import { getToastOptions } from "./helpers.js";
-import { refreshNoteIndex } from "./noteIndex.js";
-import { refreshPluginRuntimeCatalog, stopPluginRuntime } from "./pluginRuntime.js";
+import { stopPluginRuntime } from "./pluginRuntime.js";
 import { hasUnsavedWork, resolveParticipants, retainUnsavedWork } from "./sessionActions.js";
 import { createIdentityReauthentication } from "./reauthentication.js";
-import { clearStoredToken, createIdentityTokenStorage } from "./tokenStorage.js";
+import { createIdentityTokenStorage } from "./tokenStorage.js";
 import { identitySessionKey } from "./appSessionPolicy.js";
 import { createOperationOwner } from "./operationOwner.js";
 import { createSessionContext } from "./sessionContext.js";
@@ -24,6 +21,7 @@ export function createIdentityAppSession({ config, setConfig, tokens = createIde
   const ready = ref(false), valid = ref(false), reloadRequired = ref(null);
   let latestRead, transitionPending = null, documentAccount = null, locking = false, loginProof = null;
   let acceptedSignIn = null, releaseRecovery = null, authorityRead = null, credentialHandoff = null;
+  let initialLoad, projectedCredential = () => false;
   function cancelSignIn() { const previous = acceptedSignIn; acceptedSignIn = null; previous?.resolve(null); }
   function matchesSignIn(fresh) {
     const own = acceptedSignIn;
@@ -38,12 +36,14 @@ export function createIdentityAppSession({ config, setConfig, tokens = createIde
     const current = own.current.bind(() => acceptedSignIn, () => config().principal?.id, () => config().sessionGeneration);
     own.resolve(Object.freeze({ principal: Object.freeze({ ...fresh.principal }), current: () => valid.value && current() }));
   }
-  const key = () => valid.value ? identitySessionKey(config()) : null;
+  const key = () => valid.value && projectedCredential() ? JSON.stringify([context.generation, identitySessionKey(config())]) : null;
   const context = createSessionContext({ key, tokens, isOpen: () => !reloadRequired.value });
   const unavailable = () => context.disposed || locking || !!reloadRequired.value;
   const { capture, captureCredential } = context;
   const recoveryDialog = createIdentityReauthentication();
   const requestReauthentication = reauthenticate ?? recoveryDialog.request;
+  const captureReauthentication = reauthenticate ? () => reauthenticate : recoveryDialog.captureAutomatic;
+  let credentialRecovery = captureReauthentication();
   const io = transport ?? createIdentityApi({ http, context, onAuthorityFailure: authorityChanged });
   const attempt = createOperationOwner({ owner: Object.freeze({}),
       dispatch: intent => intent === "logout" ? resolve("logout") : intent === "login" ? resolve("login") :
@@ -98,10 +98,11 @@ export function createIdentityAppSession({ config, setConfig, tokens = createIde
       }
       return false;
     }
-    const changed = !valid.value || identitySessionKey(fresh) !== key();
+    const changed = key() === null || identitySessionKey(fresh) !== identitySessionKey(config());
     let adopting = context.captureTransition();
     if (changed && !retire({ preserveSignIn: matchesSignIn(fresh), onTransition: current => { adopting = current; onTransition(current); } })) return false;
     if (acceptedSignIn && !matchesSignIn(fresh)) cancelSignIn();
+    projectedCredential = captureCredential();
     setConfig(fresh); if (!adopting()) return false;
     valid.value = true; if (!adopting()) return false;
     ready.value = true; if (!adopting()) return false;
@@ -136,29 +137,45 @@ export function createIdentityAppSession({ config, setConfig, tokens = createIde
     if (current() && releaseRecovery) slot.release = release;
     else release();
   }
-  async function refresh({ accepted = false, recovery = false, signal } = {}) {
+  function load() {
+    return initialLoad ??= Promise.resolve().then(() => {
+      if (context.disposed) return false;
+      tokens.loadStoredToken?.();
+      return refresh({ initial: true });
+    });
+  }
+  async function refresh({ recovery = false, initial = false, guestRetry = false, signal } = {}) {
     if (unavailable()) return false;
     latestRead = {};
     const current = context.captureTransition().bind(() => latestRead);
     const owner = attempt, operation = owner.operation("recovery", current);
     let failureCurrent = current;
+    const requestRecovery = credentialRecovery;
     try {
       const response = await owner.dispatch(operation, { kind: "config", options: { signal } });
       const receipt = { fresh: response.value, onTransition: next => { failureCurrent = next.bind(() => latestRead); } };
       if (!owner.deliver(operation, "config", receipt) || !receipt.accepted) return false;
-      return accepted ? Object.freeze({ current: capture(), principal: Object.freeze({ ...receipt.fresh.principal }) }) : true;
+      return true;
     } catch (error) {
       if (!failureCurrent()) return false;
       const status = error.response?.status ?? error.status;
-      if (status === 401 || recovery && status === 403) {
+      if (initial && !guestRetry && status === 401 && tokens.getStoredToken() && retire()) {
+        context.advanceCredential();
+        tokens.clearStoredToken();
+        return await refresh({ initial, guestRetry: true, signal });
+      }
+      if (!initial && (status === 401 || recovery && status === 403)) {
         if (!retainAndRetire(failureCurrent)) return false;
         if (!credentialHandoff?.current() && status === 401) {
-          const completing = context.captureTransition();
-          if (retainedWork()) { if (completing()) requestReauthentication(); }
+          context.advanceCredential();
+          tokens.clearStoredToken();
+          const completing = captureCredential();
+          if (retainedWork()) { if (completing()) requestRecovery(); }
           else {
             if (!completing()) return false;
             ready.value = true;
-            if (currentRoute()?.name !== "login") owner.deliver(operation, "navigate", { target: { name: "login" } }, completing);
+            const route = currentRoute();
+            if (route?.name !== "login") owner.deliver(operation, "navigate", { target: { name: "login", ...(route?.fullPath ? { query: { redirect: route.fullPath } } : {}) } }, completing);
           }
         }
         return false;
@@ -192,6 +209,7 @@ export function createIdentityAppSession({ config, setConfig, tokens = createIde
     if (valid.value) retainUnsavedWork();
     if (!current() || !retire()) return false;
     const installing = context.advanceCredential();
+    credentialRecovery = captureReauthentication();
     return write() !== false && installing();
   }
   const acceptToken = (token, persist) => replaceCredential(() => tokens.storeToken(token, persist));
@@ -252,8 +270,11 @@ export function createIdentityAppSession({ config, setConfig, tokens = createIde
         tokens.clearStoredToken();
         const delivery = { target: { name: "login" } };
         if (!owner.deliver(operation, "navigate", delivery, signedOut)) return false;
-        if (signedOut()) void refresh().catch(error => { if (signedOut()) failed(error); });
-        await delivery.navigation;
+        // Guest adoption changes the projection and can invalidate the router's
+        // already-admitted departure. Let the route commit first; its result
+        // neither waits for the guest request nor hands it new credentials.
+        try { await delivery.navigation; }
+        finally { if (signedOut()) void refresh().catch(error => { if (signedOut()) failed(error); }); }
         return true;
       } finally { await owner.release(operation); }
     }).finally(() => { if (transitionPending === transition) transitionPending = null; });
@@ -261,9 +282,9 @@ export function createIdentityAppSession({ config, setConfig, tokens = createIde
   }
   function reload() { if (reloadRequired.value) reloadPage(); }
   return Object.freeze({ state: readonly(reactive({ ready, valid, reloadRequired })), key, capture, captureCredential,
-    load: refresh, refresh, acceptProjection: () => refresh({ accepted: true }), adopt, invalidate: () => !unavailable() && retire({ withdraw: true }), beforeSignIn, acceptToken, signIn, logout, transport: io, tokens,
+    load, refresh, refreshLive: () => key() == null ? Promise.resolve(false) : refresh(), adopt, invalidate: () => !unavailable() && retire({ withdraw: true }), beforeSignIn, acceptToken, signIn, logout, transport: io, tokens,
     authorityChanged, beginCredentialHandoff,
-    requestReauthentication,
+    requestReauthentication, captureReauthentication,
     isDisposed: () => context.disposed,
     hasWork: () => attempt.hasWork(), settle: () => attempt.settle(),
     snapshot: () => config(),
@@ -276,80 +297,4 @@ export function createIdentityAppSession({ config, setConfig, tokens = createIde
     },
     dispose() { if (!context.disposed) { stopSharedSignIn?.(); context.dispose(); recoveryDialog.close(); retire({ closing: true }); } return attempt.dispose(); },
   });
-}
-
-/** Configuration acknowledgements and session handoffs retain their original order. */
-export function createAppSession({
-  config, setConfig, setSetupRequested, setSettingsVisible, navigate, toast, loaded, failed,
-  readConfig = getConfig, applyBrand = applyBrandToDocument, reportError = apiErrorHandler,
-  refreshNotes = refreshNoteIndex, refreshCatalog = refreshPluginRuntimeCatalog,
-  stopRuntime = stopPluginRuntime, resolve = resolveParticipants, clearToken = clearStoredToken,
-  loadTokenStorage = () => import("./tokenStorage.js"),
-}) {
-  const configReady = ref(false);
-  let configRefreshTicket = 0, logoutPending = null;
-  function load() {
-    return readConfig().then(data => {
-      setConfig(data); configReady.value = true; applyBrand(data.brand); loaded(); refreshNotes();
-    }).catch(error => { reportError(error, toast); failed(); });
-  }
-  function refreshConfig() {
-    const ticket = ++configRefreshTicket;
-    return readConfig().then(fresh => {
-      if (ticket !== configRefreshTicket || fresh.accessRevision === undefined || fresh.accessRevision < (config().accessRevision ?? 0)) return;
-      setConfig(fresh);
-    }).catch(() => {});
-  }
-  function openAccessFromSettings() { setSettingsVisible(false); setSetupRequested(true); }
-  function beforeSetupCommit() { return resolve("access").then(result => result === "proceed"); }
-  function logoutFromSettings() {
-    if (logoutPending) return logoutPending;
-    logoutPending = (async () => {
-      if (await resolve("logout") !== "proceed") return;
-      stopRuntime();
-      const { clearStoredToken } = await loadTokenStorage();
-      clearStoredToken(); setSettingsVisible(false); await navigate({ name: "login" });
-    })().finally(() => { logoutPending = null; });
-    return logoutPending;
-  }
-  function setupCompleted(result) {
-    if (result) {
-      const view = result.view;
-      const acknowledged = result.config ?? {
-        ...config(), setupRequired: false,
-        authType: view.mode === 'password' ? view.totpEnabled ? authTypes.totp : authTypes.password : view.mode,
-        settingsWritable: view.settingsWritable, readOnlySettings: view.readOnlySettings, accessRevision: view.revision,
-      };
-      setConfig({ ...config(), ...acknowledged }); setSetupRequested(false); configRefreshTicket++;
-      if (result.requiresLogin) {
-        stopRuntime(); clearToken();
-        toast.add(getToastOptions("Access updated — sign in with your confirmed credentials.", "Access updated", "success"));
-        navigate({ name: "login" });
-      } else if ([authTypes.none, authTypes.readOnly].includes(acknowledged.authType)) {
-        clearToken();
-        if (acknowledged.authType === authTypes.readOnly) navigate({ name: "home" });
-        else { refreshNotes(); refreshCatalog(); }
-      } else refreshCatalog();
-      // A follow-up read cannot strand or replay the acknowledged transition.
-      readConfig().then(fresh => {
-        if ((fresh.accessRevision ?? -1) >= (config().accessRevision ?? 0)) setConfig(fresh);
-      }).catch(() => {});
-      return;
-    }
-    setSetupRequested(false);
-    // First-run setup flipped auth server-side: re-fetch config and route.
-    readConfig().then(data => {
-      setConfig(data); applyBrand(data.brand);
-      if ([authTypes.none, authTypes.readOnly].includes(data.authType)) {
-        loadTokenStorage().then(({ clearStoredToken }) => clearStoredToken());
-        refreshNotes(); navigate({ name: "home" });
-      } else {
-        stopRuntime();
-        loadTokenStorage().then(async ({ clearStoredToken }) => { clearStoredToken(); await navigate({ name: "login" }); });
-        toast.add(getToastOptions("Password created — sign in with your new credentials.", "Setup complete", "success"));
-      }
-    });
-  }
-  return { state: readonly(reactive({ configReady })), load, refreshConfig,
-    openAccessFromSettings, beforeSetupCommit, logoutFromSettings, setupCompleted };
 }

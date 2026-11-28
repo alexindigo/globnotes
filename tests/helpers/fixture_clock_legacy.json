@@ -448,30 +448,6 @@
     "family": "legacy-clock-roots"
   },
   {
-    "file": "client/tests/e2e/plugin-prefix-auth.mjs",
-    "capability": "Date.now",
-    "line": 217,
-    "source": "Date.now",
-    "context": "const expiry = Math.floor(Date.now() / 1000) + 2, short = await signed(current.secret, expiry), expired = await stream(short);",
-    "family": "legacy-clock-roots"
-  },
-  {
-    "file": "client/tests/e2e/plugin-prefix-auth.mjs",
-    "capability": "Date.now",
-    "line": 219,
-    "source": "Date.now",
-    "context": "for (const end = Date.now() + 3500; !expired.state.closed;) { assert(Date.now() < end, \"Prefix/auth consumer observation deadline\"); await new Promise(resolve => setTimeout(resolve, 25)); }",
-    "family": "legacy-clock-roots"
-  },
-  {
-    "file": "client/tests/e2e/plugin-prefix-auth.mjs",
-    "capability": "Date.now",
-    "line": 219,
-    "source": "Date.now",
-    "context": "for (const end = Date.now() + 3500; !expired.state.closed;) { assert(Date.now() < end, \"Prefix/auth consumer observation deadline\"); await new Promise(resolve => setTimeout(resolve, 25)); }",
-    "family": "legacy-clock-roots"
-  },
-  {
     "file": "client/tests/e2e/plugin-review-repairs.mjs",
     "capability": "Date.now",
     "line": 123,
@@ -557,46 +533,6 @@
     "line": 60,
     "source": "Date.now",
     "context": "await pollGate(() => Date.now() - gate.response.at > 11000);",
-    "family": "legacy-clock-roots"
-  },
-  {
-    "file": "tests/access_settings_test.ts",
-    "capability": "module:tests/helpers/totp_live.ts",
-    "line": 10,
-    "source": "\"./helpers/totp_live.ts\"",
-    "context": "import { settledTotpNow, unusedWindowCode } from \"./helpers/totp_live.ts\";",
-    "family": "legacy-live-totp-import"
-  },
-  {
-    "file": "tests/access_settings_test.ts",
-    "capability": "Date.now",
-    "line": 167,
-    "source": "Date.now",
-    "context": "Date.now() - 300_000,",
-    "family": "legacy-clock-roots"
-  },
-  {
-    "file": "tests/auth_test.ts",
-    "capability": "module:tests/helpers/totp_live.ts",
-    "line": 13,
-    "source": "\"./helpers/totp_live.ts\"",
-    "context": "import { settledTotpNow } from \"./helpers/totp_live.ts\";",
-    "family": "legacy-live-totp-import"
-  },
-  {
-    "file": "tests/auth_test.ts",
-    "capability": "Date.now",
-    "line": 446,
-    "source": "Date.now",
-    "context": "const far = await codeFor(secret, Date.now() - 10 * stepMs);",
-    "family": "legacy-clock-roots"
-  },
-  {
-    "file": "tests/auth_test.ts",
-    "capability": "Date.now",
-    "line": 485,
-    "source": "Date.now",
-    "context": "password: `secret${await codeFor(code, Date.now())}`,",
     "family": "legacy-clock-roots"
   },
   {
@@ -770,121 +706,9 @@
   {
     "file": "tests/helpers/wait.ts",
     "capability": "Date.now",
-    "line": 116,
+    "line": 34,
     "source": "Date.now",
-    "context": "const started = Date.now();",
-    "family": "legacy-clock-roots"
-  },
-  {
-    "file": "tests/helpers/wait.ts",
-    "capability": "Date.now",
-    "line": 132,
-    "source": "Date.now",
-    "context": "Date.now() - started,",
-    "family": "legacy-clock-roots"
-  },
-  {
-    "file": "tests/helpers/wait.ts",
-    "capability": "Date.now",
-    "line": 181,
-    "source": "Date.now",
-    "context": "if (Date.now() >= deadline) exceeded();",
-    "family": "legacy-clock-roots"
-  },
-  {
-    "file": "tests/http_mutation_lease_test.ts",
-    "capability": "Date.now",
-    "line": 516,
-    "source": "Date.now",
-    "context": "const clock = Date.now;",
-    "family": "legacy-clock-roots"
-  },
-  {
-    "file": "tests/http_mutation_lease_test.ts",
-    "capability": "Date.now",
-    "line": 534,
-    "source": "Date.now",
-    "context": "Date.now = () => now + 120000;",
-    "family": "legacy-clock-roots"
-  },
-  {
-    "file": "tests/http_mutation_lease_test.ts",
-    "capability": "Date.now",
-    "line": 537,
-    "source": "Date.now",
-    "context": "Date.now = clock;",
-    "family": "legacy-clock-roots"
-  },
-  {
-    "file": "tests/http_mutation_lease_test.ts",
-    "capability": "Date.now",
-    "line": 581,
-    "source": "Date.now",
-    "context": "Date.now = clock;",
-    "family": "legacy-clock-roots"
-  },
-  {
-    "file": "tests/http_mutation_lease_test.ts",
-    "capability": "Date.now",
-    "line": 592,
-    "source": "Date.now",
-    "context": "const clock = Date.now, now = clock();",
-    "family": "legacy-clock-roots"
-  },
-  {
-    "file": "tests/http_mutation_lease_test.ts",
-    "capability": "Date.now",
-    "line": 601,
-    "source": "Date.now",
-    "context": "if (transition === \"expiry\") Date.now = () => now + 120000;",
-    "family": "legacy-clock-roots"
-  },
-  {
-    "file": "tests/http_mutation_lease_test.ts",
-    "capability": "Date.now",
-    "line": 647,
-    "source": "Date.now",
-    "context": "Date.now = clock;",
-    "family": "legacy-clock-roots"
-  },
-  {
-    "file": "tests/http_mutation_lease_test.ts",
-    "capability": "Date.now",
-    "line": 662,
-    "source": "Date.now",
-    "context": "Date.now = clock;",
-    "family": "legacy-clock-roots"
-  },
-  {
-    "file": "tests/http_mutation_lease_test.ts",
-    "capability": "Date.now",
-    "line": 674,
-    "source": "Date.now",
-    "context": "const clock = Date.now, now = clock();",
-    "family": "legacy-clock-roots"
-  },
-  {
-    "file": "tests/http_mutation_lease_test.ts",
-    "capability": "Date.now",
-    "line": 726,
-    "source": "Date.now",
-    "context": "else Date.now = () => now + 120000;",
-    "family": "legacy-clock-roots"
-  },
-  {
-    "file": "tests/http_mutation_lease_test.ts",
-    "capability": "Date.now",
-    "line": 730,
-    "source": "Date.now",
-    "context": "Date.now = clock;",
-    "family": "legacy-clock-roots"
-  },
-  {
-    "file": "tests/http_mutation_lease_test.ts",
-    "capability": "Date.now",
-    "line": 747,
-    "source": "Date.now",
-    "context": "Date.now = clock;",
+    "context": "export const fixtureWallNow = () => Date.now();",
     "family": "legacy-clock-roots"
   },
   {
@@ -981,54 +805,6 @@
     "line": 44,
     "source": "Date",
     "context": "new Date(),",
-    "family": "legacy-clock-roots"
-  },
-  {
-    "file": "tests/local_auth_test.ts",
-    "capability": "module:tests/helpers/totp_live.ts",
-    "line": 13,
-    "source": "\"./helpers/totp_live.ts\"",
-    "context": "import { settledTotpNow } from \"./helpers/totp_live.ts\";",
-    "family": "legacy-live-totp-import"
-  },
-  {
-    "file": "tests/local_auth_test.ts",
-    "capability": "Date.now",
-    "line": 101,
-    "source": "Date.now",
-    "context": "const expected = Math.floor(Date.now() / 1000) + 7 * 86400;",
-    "family": "legacy-clock-roots"
-  },
-  {
-    "file": "tests/local_auth_test.ts",
-    "capability": "Date.now",
-    "line": 115,
-    "source": "Date.now",
-    "context": "const expiry = Math.floor(Date.now() / 1000) + 60;",
-    "family": "legacy-clock-roots"
-  },
-  {
-    "file": "tests/local_auth_test.ts",
-    "capability": "Date.now",
-    "line": 141,
-    "source": "Date.now",
-    "context": "await sign(\"alice\", Math.floor(Date.now() / 1000) - 1),",
-    "family": "legacy-clock-roots"
-  },
-  {
-    "file": "tests/local_auth_test.ts",
-    "capability": "Date.now",
-    "line": 266,
-    "source": "Date.now",
-    "context": "const currentCode = await codeAt(Date.now());",
-    "family": "legacy-clock-roots"
-  },
-  {
-    "file": "tests/local_auth_test.ts",
-    "capability": "Date.now",
-    "line": 267,
-    "source": "Date.now",
-    "context": "const farCode = await codeAt(Date.now() - 10 * stepMs);",
     "family": "legacy-clock-roots"
   },
   {
@@ -1381,30 +1157,6 @@
     "line": 294,
     "source": "Date.now",
     "context": "[\"accepted\", \"running\"].includes(receipt.status) && Date.now() < until",
-    "family": "legacy-clock-roots"
-  },
-  {
-    "file": "tests/timing/plugin_stream_expiry_test.ts",
-    "capability": "Date.now",
-    "line": 36,
-    "source": "Date.now",
-    "context": "const durable = await token(Math.floor(Date.now() / 1000) + 120);",
-    "family": "legacy-clock-roots"
-  },
-  {
-    "file": "tests/timing/plugin_stream_expiry_test.ts",
-    "capability": "Date.now",
-    "line": 53,
-    "source": "Date.now",
-    "context": "const expiry = Math.floor(Date.now() / 1000) + 2;",
-    "family": "legacy-clock-roots"
-  },
-  {
-    "file": "tests/timing/plugin_stream_expiry_test.ts",
-    "capability": "Date.now",
-    "line": 74,
-    "source": "Date.now",
-    "context": "setTimeout(resolve, Math.max(0, expiry * 1000 - Date.now() + 25))",
     "family": "legacy-clock-roots"
   },
   {

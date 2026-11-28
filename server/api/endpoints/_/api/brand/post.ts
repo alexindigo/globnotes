@@ -13,18 +13,14 @@ export const operation = "manageVault";
 
 import * as path from "@std/path";
 import { brandBlock, brandDirPath } from "@server/brand.ts";
-import {
-  type GlobalConfig,
-  type StoredConfig,
-  StoredConfigConflict,
-  type StoredConfigSnapshot,
-} from "@server/config.ts";
+import { StoredConfigConflict } from "@server/config.ts";
+import { assertVaultTarget } from "@server/config/projection.ts";
 import { HttpError } from "@pathfinder/pathfinder";
 import { logger } from "@server/logger.ts";
 import { state } from "@server/state.ts";
 import { settingsWriteGuard } from "@server/auth/middleware.ts";
-import type { PathfinderRequest } from "@pathfinder/pathfinder";
-import { assertVaultTarget } from "@server/config/projection.ts";
+import type { Context, PathfinderRequest } from "@pathfinder/pathfinder";
+import { committedWithPrivateJson } from "@server/auth/http_policy.ts";
 
 const ACCENT_RE = /^#[0-9a-fA-F]{6}$/;
 const IMAGE_EXTS = new Set([
@@ -57,46 +53,17 @@ function clearSlotFiles(dir: string, slot: string): void {
   }
 }
 
-/** Merge brand keys into the stored setup config and persist it. The
- * stored config is the single file the setup wizard writes — the merge
- * must preserve its auth keys (and synthesize auth_type when auth comes
- * from env only, so a later env removal doesn't drop the instance back
- * into setup). */
-function saveBrandConfig(
-  config: GlobalConfig,
-  snapshot: StoredConfigSnapshot,
-  base: StoredConfig | null,
-  changes: Partial<StoredConfig>,
-  deletions: string[],
-): void {
-  const stored: StoredConfig = {
-    ...(base ??
-      (config.authType ? { auth_type: config.authType } : {})),
-    ...changes,
-  };
-  for (const key of deletions) delete stored[key as keyof StoredConfig];
-  config.saveStoredConfig(stored, snapshot);
-}
-
-export default async function (request: PathfinderRequest) {
+export default async function (request: PathfinderRequest, context?: Context) {
   assertVaultTarget(state.config, request);
   const guard = await settingsWriteGuard(request._raw);
   const config = state.config;
-  const vaultSnapshot = config.resolved?.vault.capture();
-  const snapshot = config.captureStoredConfig();
-  const base = snapshot.raw === null ? null : JSON.parse(snapshot.raw);
-  if (JSON.stringify(base) !== JSON.stringify(config.storedConfig)) {
-    throw new HttpError(
-      409,
-      "Configuration changed externally; branding choices retained.",
-    );
-  }
+  const vaultSnapshot = config.resolved.vault.capture();
   const form = await request.body.form();
   const checkPins = () => {
     for (const key of ["name", "accent"]) {
       if (
         form.has(key) &&
-        config.resolved?.vault.provenance[`brand.${key}`]?.layer === "env"
+        config.resolved.vault.provenance[`brand.${key}`]?.layer === "env"
       ) {
         throw new HttpError(409, `${key} is pinned by server configuration.`);
       }
@@ -104,30 +71,15 @@ export default async function (request: PathfinderRequest) {
   };
   checkPins();
 
-  const changes: Partial<StoredConfig> = {};
-  const deletions: string[] = [];
-  let changed = false;
-
   const name = form.get("name");
-  if (name !== null) {
-    const value = String(name);
-    if (value === "") deletions.push("brand_name");
-    else changes.brand_name = value;
-    changed = true;
-  }
-
   const accent = form.get("accent");
-  if (accent !== null) {
-    const value = String(accent);
-    if (value === "") deletions.push("brand_accent");
-    else {
-      if (!ACCENT_RE.test(value)) {
-        throw new HttpError(400, "accent must be a #rrggbb hex color");
-      }
-      changes.brand_accent = value;
-    }
-    changed = true;
+  if (accent !== null && accent !== "" && !ACCENT_RE.test(String(accent))) {
+    throw new HttpError(400, "accent must be a #rrggbb hex color");
   }
+  const brand = {
+    ...(name !== null ? { name: String(name) } : {}),
+    ...(accent !== null ? { accent: String(accent) } : {}),
+  };
 
   const dir = brandDirPath(config.statePath);
   const uploads: { slot: string; ext: string; bytes: Uint8Array }[] = [];
@@ -144,29 +96,23 @@ export default async function (request: PathfinderRequest) {
         ext,
         bytes: new Uint8Array(await file.arrayBuffer()),
       });
-      changed = true;
     }
     const remove = form.get(`remove${slot === "logo" ? "Logo" : "Icon"}`);
     if (remove !== null && String(remove) !== "") {
       removals.push(slot);
-      changed = true;
     }
   }
 
   const commit = () => {
     guard();
-    if (
-      state.config !== config ||
-      JSON.stringify(base) !== JSON.stringify(config.storedConfig)
-    ) {
+    if (state.config !== config) {
       throw new HttpError(
         409,
         "Configuration changed externally; branding choices retained.",
       );
     }
-    config.assertStoredConfigUnchanged(snapshot);
     checkPins();
-    if (vaultSnapshot) config.resolved!.vault.assertUnchanged(vaultSnapshot);
+    config.resolved.vault.assertUnchanged(vaultSnapshot);
     for (const upload of uploads) {
       Deno.mkdirSync(dir, { recursive: true });
       clearSlotFiles(dir, upload.slot);
@@ -176,22 +122,21 @@ export default async function (request: PathfinderRequest) {
       );
     }
     for (const slot of removals) clearSlotFiles(dir, slot);
-    if (changed) {
-      if (vaultSnapshot) {
-        const brand = {
-          ...(name !== null ? { name: String(name) } : {}),
-          ...(accent !== null ? { accent: String(accent) } : {}),
-        };
-        if (Object.keys(brand).length) {
-          config.resolved!.vault.save({ brand }, vaultSnapshot, guard);
-        }
-      } else saveBrandConfig(config, snapshot, base, changes, deletions);
+    if (Object.keys(brand).length) {
+      config.resolved.vault.save({ brand }, vaultSnapshot, guard);
+    }
+    if (Object.keys(brand).length || uploads.length || removals.length) {
       logger.info("Instance branding updated.");
     }
     return brandBlock(config);
   };
   try {
-    return state.lifecycle ? await state.lifecycle.gate.run(commit) : commit();
+    const fresh = state.lifecycle
+      ? await state.lifecycle.gate.run(commit)
+      : commit();
+    return committedWithPrivateJson(context?.state.identityLease, fresh, {
+      committed: true,
+    });
   } catch (error) {
     if (error instanceof StoredConfigConflict) {
       throw new HttpError(

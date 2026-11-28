@@ -6,7 +6,11 @@ import {
   type PluginServiceEligibility,
 } from "../plugins/lifecycle.ts";
 import type { PluginManager } from "../plugins/manager.ts";
+import type { PluginDataStore } from "../plugins/data.ts";
+import { HttpError } from "@pathfinder/pathfinder";
+import { PluginContractError } from "../plugins/contracts.ts";
 import type { AclRepository } from "./acl.ts";
+import { AdmissionRefusal } from "./admission_refusal.ts";
 import {
   type AuthorityDisclosure,
   InstanceAuthority,
@@ -14,6 +18,7 @@ import {
   type VaultAuthorityLease,
 } from "./authority.ts";
 import { createInstanceAuth, type StatusAdmission } from "./middleware.ts";
+import { deliveryJson, singleIdentityVault } from "./http_policy.ts";
 import type { AuthorityCallback } from "./authority_context.ts";
 import { createIdentityProjections } from "./projection.ts";
 import type { InstanceSessions } from "./sessions.ts";
@@ -65,9 +70,7 @@ function jsonResponse<T>(
   return new Response(disclosure.body(handle), { headers: JSON_HEADERS });
 }
 
-/** Prepared composition only. Its caller supplies the explicit live lifetime and
- * retires it; production binds concrete identities only at the coordinated
- * switch. There is no global current viewer, second policy store or flag. */
+/** The instance supplies and retires the live lifetime shared by all consumers. */
 export function createIdentityComposition(adapters: {
   sessions: InstanceSessions;
   acl: AclRepository;
@@ -94,7 +97,7 @@ export function createIdentityComposition(adapters: {
   const authority = new InstanceAuthority(sessions, () => vault, lifetime);
   const auth = createInstanceAuth({
     sessions,
-    vault: () => vault,
+    vault: singleIdentityVault(vault),
     cookieName: adapters.cookieName ??
       identityTokenScope(adapters.config.pathPrefix).cookieName,
     lifetime: () => lifetime,
@@ -154,6 +157,66 @@ export function createIdentityComposition(adapters: {
           lease,
           await lease.read(() => projections.catalog(manage)),
         );
+      },
+      async pluginSettings(
+        request: Request,
+        data: PluginDataStore,
+        id: string,
+        pageId: string,
+      ): Promise<Response> {
+        const reader = await auth.readLease(request);
+        const manage = authority.capabilities(reader.principal).canManageVault;
+        const lease = manage
+          ? await auth.lease(request, "manageVault")
+          : reader;
+        const plugins = adapters.plugins();
+        if (manage) {
+          return jsonResponse(
+            lease,
+            await lease.read(async () => {
+              const inventory = await plugins.catalog();
+              const page = inventory.plugins.find((plugin) => plugin.id === id)
+                ?.pages.find(({ id }) => id === pageId);
+              if (!page) throw new HttpError(404, "Not Found");
+              const current = await data.forPlugin(id).page(page);
+              return {
+                values: current.values,
+                revision: current.revision,
+                sourceKey: current.sourceKey,
+                fields: current.fields,
+              };
+            }),
+          );
+        }
+        lease.assertCurrent();
+        const owner = plugins.browserOwner(id);
+        if (!owner?.manifest.settings.some(({ id }) => id === pageId)) {
+          throw new AdmissionRefusal("operation_not_permitted");
+        }
+        const source = data.forPlugin(id).settingsLease(
+          owner.manifest.settings,
+        );
+        const assertCurrent = () => {
+          lease.assertCurrent();
+          const current = plugins.browserOwner(id);
+          if (
+            adapters.plugins() !== plugins || !current ||
+            current.epoch !== owner.epoch
+          ) {
+            throw new PluginContractError(
+              409,
+              "plugin_settings_source_conflict",
+              "Plugin browser contribution changed.",
+            );
+          }
+          source.assertCurrent();
+        };
+        const projection = { values: source.values[pageId] };
+        assertCurrent();
+        return deliveryJson(() => {
+          assertCurrent();
+          return projection;
+        });
       },
     }),
     async streamAccess(request: Request): Promise<IdentityStreamAccess> {

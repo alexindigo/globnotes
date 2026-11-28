@@ -12,10 +12,3 @@ export const searchSortOptions = {
   path: 1,
   lastModified: 2,
 };
-
-export const authTypes = {
-  none: "none",
-  readOnly: "read_only",
-  password: "password",
-  totp: "totp",
-};

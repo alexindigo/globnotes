@@ -7,6 +7,7 @@ import {
 } from "@server/plugins/contracts.ts";
 import { state } from "@server/state.ts";
 import { settingsWriteGuard } from "@server/auth/middleware.ts";
+import { deliverAdmissionRefusals } from "@server/auth/admission_refusal.ts";
 
 /** Bounded JSON admission shared by the two permission control mutations. */
 export async function readPermissionBody(
@@ -56,7 +57,7 @@ export async function readPermissionBody(
     );
   }
 }
-export default async function (request: PathfinderRequest) {
+export default deliverAdmissionRefusals(async (request: PathfinderRequest) => {
   const guard = await settingsWriteGuard(request._raw);
   try {
     return await state.pluginNetwork!.controls(
@@ -73,4 +74,4 @@ export default async function (request: PathfinderRequest) {
     }
     throw error;
   }
-}
+});

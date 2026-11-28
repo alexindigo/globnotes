@@ -264,7 +264,28 @@ if (afterDiscard.hash !== "" || !afterDiscard.viewer || afterDiscard.editor) {
 await page.goto(NOTE);
 await page.poll(`document.querySelector(".toastui-editor-contents") !== null`);
 await closeDrawer();
-await page.evaluate(`sessionStorage.setItem("rendering/code-blocks", "# stored draft")`);
+// Create the draft through the editor so the product chooses its owner/key.
+const draft = "# stored draft";
+await page.clickText("Edit");
+await page.poll(`!!document.querySelector(".cm-editor")`);
+await page.click(".cm-content");
+await page.key("a", { modifiers: 2, code: "KeyA", windowsVirtualKeyCode: 65 });
+await page.send("Input.insertText", { text: draft });
+await page.poll(`Object.keys(sessionStorage).filter(key => key.startsWith('globnotes:draft:identity:') && key.endsWith(':rendering%2Fcode-blocks')).some(key => JSON.parse(sessionStorage.getItem(key)).value === ${JSON.stringify(draft)})`);
+let unload;
+const stopUnload = page.onEvent(event => {
+  if (event.method === "Page.javascriptDialogOpening" && event.params.type === "beforeunload") {
+    unload = page.send("Page.handleJavaScriptDialog", { accept: true });
+    unload.catch(() => {});
+  }
+});
+try {
+  await page.goto(`${BASE}/`);
+  await page.poll(`location.href === ${JSON.stringify(`${BASE}/`)}`);
+  await unload;
+} finally { stopUnload(); }
+await page.goto(NOTE);
+await page.poll(`document.querySelector(".toastui-editor-contents") !== null`);
 await page.clickText("Edit");
 await page.poll(`document.body.innerText.includes("Draft Detected")`, { timeout: 10000 });
 await clickModalButton("Resume Draft");

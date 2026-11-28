@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { HttpError } from "@pathfinder/pathfinder";
+import { record } from "./records.ts";
 
 /** Accept either a Fetch request or Pathfinder's body accessor. Body I/O is
  * outside the parse boundary so transport, limit and abort errors pass through. */
@@ -17,4 +18,12 @@ export async function readRequestJson(
     }
     throw error;
   }
+}
+
+export async function readRequestObject(
+  body: Parameters<typeof readRequestJson>[0],
+) {
+  const value = await readRequestJson(body);
+  if (!record(value)) throw new HttpError(400, "Expected a JSON object.");
+  return value;
 }

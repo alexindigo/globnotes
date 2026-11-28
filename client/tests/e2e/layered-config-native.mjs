@@ -8,6 +8,7 @@ import { finalizeNativeCase } from "./native-case-finalization.mjs";
 import { assert } from "./test-outcomes.mjs";
 import { nativeAccountScenario, nativeFixtureInput } from "./config-fixture.mjs";
 import { storedScenario } from "../../../tests/helpers/fixture_scenarios.ts";
+import { fixtureSignIn } from "../../../tests/helpers/boot.ts";
 
 const directory = `${Deno.env.get("GLOBNOTES_E2E_ARTIFACTS") ?? await Deno.makeTempDir({ prefix: "layered-config-native-" })}/consumers`;
 const multilineValue = 'first\n  second\n\n    third\n' + 'unbroken'.repeat(80);
@@ -15,7 +16,9 @@ await Deno.mkdir(directory, { recursive: true });
 const vault = `${directory}/notes`, state = `${directory}/metadata/globnotes`, file = `${state}/config.toml`;
 await Deno.mkdir(vault); await Deno.mkdir(`${state}/plugins/layered-probe`, { recursive: true });
 await Deno.writeTextFile(`${vault}/NativeConsumer.md`, "# Native consumer\n\nSaved setting consumer.\n");
-const { fixtureScenario } = await nativeFixtureInput(nativeAccountScenario());
+const scenario = nativeAccountScenario();
+const admin = scenario.identity.people[0];
+const { fixtureScenario } = await nativeFixtureInput(scenario);
 await Deno.writeTextFile(file, '[brand]\nname="Initial saved name"\naccent="#123456"\n[quickaccess]\ntitle="TOML quick access consumer"\nlimit=1\n');
 await Deno.writeTextFile(`${state}/plugins.json`, JSON.stringify({ enabled: ["layered-probe"], autoEnable: false }));
 await Deno.writeTextFile(`${state}/plugins/layered-probe/manifest.json`, JSON.stringify({
@@ -23,14 +26,14 @@ await Deno.writeTextFile(`${state}/plugins/layered-probe/manifest.json`, JSON.st
   settings: [{ id: "preferences", label: "Layered preferences", renderer: { kind: "declarative-v1", version: 1 }, fields: [{ key: "message", label: "Message", type: "text", default: "manifest baseline" }, { key: "instructions", label: "Instructions", type: "textarea", default: "manifest instructions" }] }],
 }));
 await Deno.writeTextFile(`${state}/plugins/layered-probe/service.js`, "export function activate(ctx){ctx.commands.register({id:'consumer',label:'Layered consumer',target:'server'},async()=> (await ctx.settings.read()).values.preferences.message);}");
-let server, session, failure, environment = { GLOBNOTES_GLOBNOTES_PLUGINS_AUTOENABLE: "false" };
+let server, session, token, failure, environment = { GLOBNOTES_GLOBNOTES_PLUGINS_AUTOENABLE: "false" };
 const results = [];
 async function launch(count) {
   const logsDir = `${directory}/backend-${count}`; await Deno.mkdir(logsDir);
   return bootServer(vault, state, { fixtureScenario: count === 1 ? fixtureScenario : storedScenario(fixtureScenario), env: environment, logsDir });
 }
 async function api(route, method = "GET", body) {
-  const response = await fetch(`${server.baseUrl}/_/api/${route}`, { method, headers: body === undefined ? {} : { "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(5000) });
+  const response = await fetch(`${server.baseUrl}/_/api/${route}`, { method, headers: { authorization: `Bearer ${token}`, ...(body === undefined ? {} : { "content-type": "application/json" }) }, body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(5000) });
   const text = await response.text(); return { status: response.status, body: text ? JSON.parse(text) : null };
 }
 async function fill(selector, value) {
@@ -50,7 +53,13 @@ async function home(name) {
 }
 try {
   server = createSettingsRestartFixture({ initialServer: await launch(1), launch, directory });
+  token = await fixtureSignIn(server.baseUrl, admin);
   session = await nativeSession({ port: Number(Deno.env.get("CDP_PORT") ?? 9335) });
+  await session.goto(`${server.baseUrl}/_/login?redirect=/`);
+  await fill("#identity-login-name", admin.login);
+  await fill("#identity-login-password", admin.password);
+  await session.button("Continue");
+  await session.poll("location.pathname === '/'");
   await home("Initial saved name");
   assert((await api("config")).body.provenance["quickaccess.title"].layer === "toml", "Quick access lost TOML provenance");
   await branding();
@@ -80,7 +89,7 @@ try {
   const persisted = parse(await Deno.readTextFile(file));
   assert(persisted.brand.name === "Native persisted brand" && persisted.brand.accent === "", "Pinned save flattened the env name or lost the sibling edit");
   const bytes = await Deno.readTextFile(file), form = new FormData(); form.set("name", "forbidden direct name");
-  const denied = await fetch(`${server.baseUrl}/_/api/brand`, { method: "POST", body: form });
+  const denied = await fetch(`${server.baseUrl}/_/api/brand`, { method: "POST", headers: { authorization: `Bearer ${token}` }, body: form });
   assert(denied.status === 409, "Direct brand pin mutation succeeded"); await denied.body?.cancel();
   assert(await Deno.readTextFile(file) === bytes, "Forbidden brand edit changed disk");
   await session.click('[data-settings-nav-id="plugin:layered-probe"]');

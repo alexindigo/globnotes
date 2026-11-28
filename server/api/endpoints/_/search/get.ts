@@ -6,6 +6,4 @@ export const operation = "public";
 
 import { serveIndex } from "@server/catchall.ts";
 
-export const auth = false;
-
 export default () => serveIndex();

@@ -3,7 +3,11 @@
 /** Shared proxy for the plugin-local endpoint namespace. Host controls live
  * under /_/api/plugin-host so plugin routes can never shadow them. */
 
-import { BodyLimitError, HttpError } from "@pathfinder/pathfinder";
+import {
+  BodyLimitError,
+  type Context,
+  HttpError,
+} from "@pathfinder/pathfinder";
 import {
   PLUGIN_LIMITS,
   type PluginHttpRequest,
@@ -13,20 +17,39 @@ import { sanitizeRequestHeaders } from "./endpoints.ts";
 import { advertisedEndpointMethods } from "./endpoint_table.ts";
 import { state } from "../state.ts";
 import { type ObservedClock, processClock } from "../observed_time.ts";
-import type { ViewerAuthority } from "../auth/authority.ts";
+import type { VaultAuthorityLease } from "../auth/authority.ts";
 import type { createInstanceAuth } from "../auth/middleware.ts";
-import { createHttpPolicy } from "../auth/http_policy.ts";
+import { protectPrivateResponse } from "../auth/http_policy.ts";
 
-/** Injection-only identity caller; production activation remains at cutover. */
+async function proxyAdmitted(
+  request: PluginProxyRequest,
+  lease: VaultAuthorityLease,
+) {
+  lease.assertCurrent();
+  return await protectPrivateResponse(
+    lease,
+    await proxyPluginEndpoint(request, undefined, lease),
+  );
+}
+
 export function createIdentityPluginProxy(
   auth: ReturnType<typeof createInstanceAuth>,
+  operation: "readVault" | "editNotes" = "readVault",
 ) {
-  const policy = createHttpPolicy(auth);
-  return async (request: PluginProxyRequest) => {
-    return await policy.read(request._raw, "readVault", async ({ viewer }) => {
-      return await proxyPluginEndpoint(request, undefined, viewer);
-    });
-  };
+  return async (request: PluginProxyRequest) =>
+    await proxyAdmitted(request, await auth.lease(request._raw, operation));
+}
+
+/** Discovered plugin routes always carry the current caller into the Worker. */
+export function proxyActivePluginEndpoint(
+  request: PluginProxyRequest,
+  context: Context,
+) {
+  const lease = context.state.identityLease;
+  if (!lease || !("viewer" in lease)) {
+    throw new TypeError("Plugin proxy requires the admitted vault operation.");
+  }
+  return proxyAdmitted(request, lease);
 }
 
 const textEncoder = new TextEncoder();
@@ -76,7 +99,7 @@ function localLookup<T>(lookup: () => T): T {
 export async function proxyPluginEndpoint(
   request: PluginProxyRequest,
   _localPath?: string,
-  viewer?: ViewerAuthority,
+  lease?: VaultAuthorityLease,
 ): Promise<Response> {
   const { id, path } = encodedPluginPath(request);
   const endpoints = state.pluginEndpoints;
@@ -96,6 +119,7 @@ export async function proxyPluginEndpoint(
     });
   }
   const body = await readBodyBytes(request);
+  lease?.assertCurrent();
   const envelope: PluginHttpRequest = {
     method: request.method as PluginHttpRequest["method"],
     path,
@@ -104,8 +128,13 @@ export async function proxyPluginEndpoint(
     headers: sanitizeRequestHeaders(request.headers),
     body,
   };
-  const outcome = await endpoints.invoke(admission, envelope, viewer);
-  viewer?.assertCurrent();
+  const outcome = await endpoints.invoke(
+    admission,
+    envelope,
+    lease?.viewer,
+    lease && { assertCurrent: lease.assertCurrent, posted() {} },
+  );
+  lease?.assertCurrent();
   if (outcome.kind === "unavailable" || outcome.kind === "not-found") {
     // Disabled/unavailable plugins and plain route misses are both 404 —
     // installed files never leak availability.

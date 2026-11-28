@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-only
+import { fixturePage, preparePluginFixture } from "./helpers/plugin_fixture.ts";
+import { openFixtureIdentity } from "./helpers/identity_fixture.ts";
+import { signIn } from "./helpers/session_delivery.ts";
 import { publicScenario } from "./helpers/fixture_scenarios.ts";
 
 import { assert, assertEquals, assertRejects } from "@std/assert";
@@ -7,10 +10,8 @@ import type { PluginManager } from "../server/plugins/manager.ts";
 import { createPluginManager } from "./helpers/plugin_manager.ts";
 import { PluginHost, type RpcAuthority } from "../server/plugins/host.ts";
 import { PluginDataStore } from "../server/plugins/data.ts";
-import { fixturePage } from "./helpers/plugin_fixture.ts";
 import { renderMarkdown } from "../server/render/pipeline.ts";
 import { state } from "../server/state.ts";
-import { pluginFixture } from "./helpers/plugin_fixture.ts";
 import { GlobalConfig } from "./helpers/config.ts";
 import {
   bounded as livenessBounded,
@@ -57,77 +58,87 @@ async function fixtureBundle(
   ) => Promise<unknown> = () => Promise.resolve(null),
   retain = false,
 ) {
-  const fixture = await pluginFixture();
-  const previousState = {
-    config: state.config,
-    auth: state.auth,
-    plugins: state.plugins,
-    lifecycle: state.lifecycle,
-  };
-  const env = testEnvironment({
-    GLOBNOTES_GLOBNOTES_PATH: fixture.vault,
-    fixtureStatePath: fixture.statePath,
-    fixtureScenario: publicScenario(),
-  });
-  state.config = new GlobalConfig(env);
-  state.auth = null;
-  const manager = createPluginManager(
-    fixture.vault,
-    rpc,
-    2,
-    fixture.statePath,
-    {
-      env,
-      internalRoot: `${fixture.root}/empty-internal`,
-      autoEnable: true,
-      persistence: { commit: (effect) => effect() },
-    },
-  );
-  state.plugins = manager;
-  state.lifecycle = null;
-  const runtime = manager.configureRuntime({
-    operational: () => true,
-    writable: () => true,
-    commit: (effect) => effect(),
-    rpc: (_manifest, method, args, authority) => rpc(method, args, authority),
-  });
-  const enable = async (id: string, enabled: boolean) => {
-    const { metadata } = await manager.policy.read();
-    const result = await enabledPut(
+  const owned = await preparePluginFixture(async (fixture, scope) => {
+    const previousState = {
+      config: state.config,
+      identity: state.identity,
+      plugins: state.plugins,
+      lifecycle: state.lifecycle,
+    };
+    scope.defer(() => Object.assign(state, previousState));
+    const env = testEnvironment({
+      GLOBNOTES_GLOBNOTES_PATH: fixture.vault,
+      GLOBNOTES__METADATA_PATH: fixture.metadataBase,
+      fixtureStatePath: fixture.statePath,
+      fixtureScenario: publicScenario(),
+    });
+    state.config = new GlobalConfig(env);
+    const manager = createPluginManager(
+      fixture.vault,
+      rpc,
+      2,
+      fixture.statePath,
       {
-        _raw: new Request(`http://fixture/_/api/plugin-host/${id}/enabled`, {
-          method: "PUT",
-        }),
-        params: { id },
-        body: { json: () => Promise.resolve({ ...metadata, enabled }) },
-      } as unknown as PathfinderRequest,
+        env,
+        internalRoot: `${fixture.root}/empty-internal`,
+        autoEnable: true,
+        persistence: { commit: (effect) => effect() },
+      },
     );
-    if (result instanceof Response) {
-      throw new Error(
-        `enablement rejected: ${result.status} ${await result.text()}`,
+    state.plugins = manager;
+    scope.defer(() => manager.stop());
+    const identity = await openFixtureIdentity(
+      scope,
+      state.config,
+      publicScenario().identity,
+      () => manager,
+    );
+    state.identity = identity;
+    state.lifecycle = identity.composition.lifecycle;
+    const admin = await signIn(identity.sessions, {
+      username: "alice",
+      password: "password",
+    });
+    const runtime = manager.configureRuntime({
+      operational: () => true,
+      writable: () => true,
+      commit: (effect) => effect(),
+      rpc: (_manifest, method, args, authority) => rpc(method, args, authority),
+    });
+    scope.defer(() => runtime.close());
+    const enable = async (id: string, enabled: boolean) => {
+      const { metadata } = await manager.policy.read();
+      const result = await enabledPut(
+        {
+          _raw: new Request(`http://fixture/_/api/plugin-host/${id}/enabled`, {
+            method: "PUT",
+            headers: { authorization: `Bearer ${admin.access_token}` },
+          }),
+          params: { id },
+          body: {
+            text: () =>
+              Promise.resolve(JSON.stringify({ ...metadata, enabled })),
+          },
+        } as unknown as PathfinderRequest,
       );
-    }
-    return result;
-  };
-  const render = (language = "probe") =>
-    renderMarkdown(`\`\`\`${language}\nconsumer\n\`\`\`\n`);
-  return {
-    fixture,
-    manager,
-    runtime,
-    enable,
-    render,
-    async close() {
-      manager.stop();
-      await runtime.close();
-      if (retain) {
-        console.log(
-          JSON.stringify({ retainedRenderLifecycleFixture: fixture.root }),
+      if (result instanceof Response) {
+        throw new Error(
+          `enablement rejected: ${result.status} ${await result.text()}`,
         );
-      } else await fixture.dispose();
-      Object.assign(state, previousState);
-    },
-  };
+      }
+      return result;
+    };
+    const render = (language = "probe") =>
+      renderMarkdown(`\`\`\`${language}\nconsumer\n\`\`\`\n`);
+    return {
+      fixture,
+      manager,
+      runtime,
+      enable,
+      render,
+    };
+  }, { retain });
+  return { ...owned.value, close: owned.close };
 }
 /** Wait until the probe's permission reload is no longer scheduled or
  * reloading and return the view. */

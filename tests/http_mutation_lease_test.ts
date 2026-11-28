@@ -1,5 +1,4 @@
 import { testMetadata, testServices } from "./helpers/environment.ts";
-import { fixturePasswordHash } from "./helpers/config.ts";
 // SPDX-License-Identifier: LGPL-3.0-only
 
 /** Real handlers/storage/index consumers with test-local await barriers.
@@ -8,21 +7,26 @@ import { fixturePasswordHash } from "./helpers/config.ts";
 import { currentBase, gatedNotes } from "./helpers/storage.ts";
 import { assert, assertEquals } from "@std/assert";
 import { HttpError, type PathfinderRequest } from "@pathfinder/pathfinder";
-import { SignJWT } from "jose";
-import { AuthType, GlobalConfig } from "./helpers/config.ts";
-import {
-  accountScenario,
-  signedInScenario,
-} from "./helpers/fixture_scenarios.ts";
-import { LocalAuth } from "../server/auth/local.ts";
-import { enforceAuth } from "../server/auth/middleware.ts";
+import { GlobalConfig } from "./helpers/config.ts";
+import { signedInScenario } from "./helpers/fixture_scenarios.ts";
+import { createHttpPolicy } from "../server/auth/http_policy.ts";
+import { AdmissionRefusal } from "../server/auth/admission_refusal.ts";
+import { OperationError } from "../server/plugins/errors.ts";
+import { createUuid } from "../shared/uuid.ts";
+import { identityTokenScope } from "../shared/identity_token.ts";
+import { openFixtureIdentity } from "./helpers/identity_fixture.ts";
+import { type FixtureScope, fixtureScope } from "./helpers/fixture_scope.ts";
+import { fixtureGate } from "./helpers/fixture_coordination.ts";
+import { awaitIndexReady, installFixtureState } from "./helpers/state.ts";
+import { signIn } from "./helpers/session_delivery.ts";
+import { bounded as boundedWorker } from "./helpers/worker_liveness.ts";
 import { FileServing } from "../server/files/file_serving.ts";
 import { FileSystemNotes } from "../server/notes/file_system.ts";
 import { NoteOperations } from "../server/notes/operations.ts";
 import { PluginLifecycle } from "../server/plugins/lifecycle.ts";
 import { createPluginManager } from "./helpers/plugin_manager.ts";
 import { Fts5Indexer } from "../server/search/fts5.ts";
-import { initState, state } from "../server/state.ts";
+import { state } from "../server/state.ts";
 import type { OperationFact } from "../server/plugins/contracts.ts";
 import { testEnvironment } from "./helpers/environment.ts";
 // Match the existing filesystem loader's runtime import seam. Encode the #
@@ -43,9 +47,9 @@ const rewrite = await endpoint(
   "../server/api/endpoints/_/api/files/rewrite-refs/post.ts",
 );
 
-function barrier() {
-  const reached = Promise.withResolvers<void>();
-  const release = Promise.withResolvers<void>();
+function barrier(scope: FixtureScope) {
+  const reached = fixtureGate(scope);
+  const release = fixtureGate(scope);
   return {
     reached: reached.promise,
     arrive: reached.resolve,
@@ -55,21 +59,10 @@ function barrier() {
 }
 
 async function bounded<T>(promise: Promise<T>): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(
-          () =>
-            reject(new Error("R01 fixture did not reach its intended barrier")),
-          5000,
-        );
-      }),
-    ]);
-  } finally {
-    clearTimeout(timer);
-  }
+  return await boundedWorker(
+    promise,
+    "R01 fixture reached its intended barrier",
+  );
 }
 
 async function outcome(promise: Promise<unknown>) {
@@ -80,38 +73,42 @@ async function outcome(promise: Promise<unknown>) {
     }
     return { status: 200, body: result };
   } catch (error) {
+    if (error instanceof AdmissionRefusal) {
+      return { status: error.status, body: await error.response().json() };
+    }
     if (error instanceof HttpError) {
       return { status: error.status, body: error.message };
+    }
+    if (error instanceof OperationError) {
+      return { status: error.status, body: { code: error.code } };
     }
     throw error;
   }
 }
 
-async function fixture() {
+async function fixture(owner: FixtureScope) {
   const root = await Deno.makeTempDir({ prefix: "review-r01-" });
+  // Kept on disk as evidence after owned runtime teardown.
+  owner.defer(() =>
+    console.log(
+      JSON.stringify({ fixture: "R01", root, evidenceRetained: true }),
+    )
+  );
   const vault = `${root}/vault`, storage = `${root}/state`;
   await Deno.mkdir(vault);
   await Deno.mkdir(storage);
-  const previousState = { ...state };
+  const login = "lease-fixture";
+  let password = "fixture-only-password";
+  let now = 1_800_000_000_000;
   const env = testEnvironment({
     GLOBNOTES_GLOBNOTES_PATH: vault,
     fixtureStatePath: storage,
-    fixtureScenario: accountScenario(
-      signedInScenario({
-        login: "lease-fixture",
-        password: "fixture-only-password",
-      }, { everybody: "edit" }).identity,
-      {
-        username: "lease-fixture",
-        password_hash: fixturePasswordHash("fixture-only-password"),
-      },
-    ),
+    GLOBNOTES__METADATA_PATH: `${root}/metadata`,
+    fixtureScenario: signedInScenario({ login, password }, {
+      everybody: "edit",
+    }),
     GLOBNOTES__INDEX_SCANCACHETTL: "0",
   });
-  Deno.writeTextFileSync(
-    `${storage}/config.json`,
-    JSON.stringify({ auth_type: "none", secret_key: "fixture-only-secret-A" }),
-  );
   const config = new GlobalConfig(env);
   const notes = gatedNotes(
       new FileSystemNotes(vault, {}, testServices(env).notes),
@@ -125,8 +122,24 @@ async function fixture() {
     internalRoot: `${root}/internal`,
     env,
   });
-  initState(config, null, notes, indexer, files, manager);
-  const lifecycle = new PluginLifecycle(config);
+  owner.defer(() => manager.stop());
+  const identity = await openFixtureIdentity(
+    owner,
+    config,
+    config.fixtureIdentity!,
+    () => manager,
+    { sessionClock: { now: () => now } },
+  );
+  installFixtureState(
+    owner.defer,
+    config,
+    identity,
+    notes,
+    indexer,
+    files,
+    manager,
+  );
+  const lifecycle = identity.composition.lifecycle;
   const runtime = manager.configureRuntime({
     operational: () => lifecycle.operational(),
     writable: () => lifecycle.writable(),
@@ -139,6 +152,7 @@ async function fixture() {
     runtime: () => runtime,
     lifecycle,
   });
+  owner.defer(() => runtime.close());
   state.lifecycle = lifecycle;
   state.operations = operations;
   const facts: OperationFact[] = [];
@@ -150,22 +164,18 @@ async function fixture() {
   Deno.writeTextFileSync(`${vault}/old.png`, "original attachment");
   // Raw fixture setup bypasses managed writes; seed its derived index explicitly.
   indexer.startBackgroundSync();
-  while (indexer.indexStatus.syncing) {
-    await new Promise((r) => setTimeout(r, 10));
-  }
-  let secret = "fixture-only-secret-A";
-  function protect(rotate = false) {
-    if (rotate) secret = "fixture-only-secret-B";
-    config.saveStoredConfig({
-      ...config.storedConfig,
-      auth_type: "password",
-      secret_key: secret,
+  await awaitIndexReady(indexer);
+  function protect(everybody: "none" | "view" = "none") {
+    const before = identity.acl.capture();
+    identity.acl.save({ everybody, grants: before.value.grants }, before, {
+      updateId: createUuid(),
+      actorId: identity.accounts.byLogin(login)!.id,
     });
-    config.authType = AuthType.PASSWORD;
-    state.auth = new LocalAuth(config);
-    lifecycle.bumpEpoch();
   }
+  const session = () =>
+    signIn(identity.sessions, { username: login, password });
   return {
+    barrier: () => barrier(owner),
     root,
     vault,
     config,
@@ -175,13 +185,26 @@ async function fixture() {
     runtime,
     operations,
     facts,
+    identity,
     protect,
-    async token(expires?: number) {
-      let jwt = new SignJWT({ sub: "lease-fixture" }).setProtectedHeader({
-        alg: "HS256",
-      });
-      if (expires !== undefined) jwt = jwt.setExpirationTime(expires);
-      return await jwt.sign(new TextEncoder().encode(secret));
+    expire() {
+      now += identity.sessions.settings.expirySeconds * 1000 + 1;
+    },
+    async rotate() {
+      const { principal } = await session();
+      const next = "fixture-only-password-rotated";
+      await new Response(
+        await identity.account.change(principal, {
+          revision: principal.credentialRevision,
+          updateId: createUuid(),
+          currentPassword: password,
+          newPassword: next,
+        }),
+      ).json();
+      password = next;
+    },
+    async token() {
+      return (await session()).access_token;
     },
     untouched() {
       assertEquals(
@@ -201,21 +224,13 @@ async function fixture() {
       ]);
       assertEquals(facts, []);
     },
-    async close() {
-      await runtime.close();
-      manager.stop();
-      for (const key of Object.keys(state)) {
-        if (!Object.hasOwn(previousState, key)) {
-          Reflect.deleteProperty(state, key);
-        }
-      }
-      Object.assign(state, previousState);
-      // Generated evidence survives both red and green; only owned runtime closes.
-      console.log(
-        JSON.stringify({ fixture: "R01", root, evidenceRetained: true }),
-      );
-    },
   };
+}
+
+function mutationFixture(
+  run: (f: Awaited<ReturnType<typeof fixture>>) => Promise<void>,
+) {
+  return fixtureScope(async (scope) => await run(await fixture(scope)));
 }
 
 type Handler = (request: PathfinderRequest) => Promise<unknown>;
@@ -248,10 +263,10 @@ function request(
     params: { path: "victim" },
     query: new URL(raw.url).searchParams,
     body: {
-      json: async () => {
+      text: async () => {
         hold?.arrive();
         if (hold) await hold.waiting;
-        return structuredClone(body);
+        return JSON.stringify(body);
       },
       form: async () => {
         hold?.arrive();
@@ -262,116 +277,131 @@ function request(
   } as unknown as PathfinderRequest;
 }
 async function admitted(handler: Handler, req: PathfinderRequest) {
-  await enforceAuth(req._raw);
+  if (state.identity) {
+    await createHttpPolicy(state.identity.composition.auth).admit(
+      req._raw,
+      "editNotes",
+    );
+  }
   return await handler(req);
 }
 
 Deno.test("review repairs: R01 old HTTP body authority cannot borrow protection or rotation", async (t) => {
   for (const transition of ["protection", "rotation"] as const) {
-    await t.step(transition, async () => {
-      const f = await fixture(), hold = barrier();
-      try {
-        if (transition === "rotation") f.protect();
-        const token = transition === "rotation" ? await f.token() : undefined;
-        const pending = outcome(
-          admitted(
-            update,
-            request(
-              "PATCH",
-              "notes/victim",
-              { newContent: "unauthorized overwrite" },
-              hold,
-              token,
+    await t.step(transition, () =>
+      mutationFixture(async (f) => {
+        const hold = f.barrier();
+        try {
+          if (transition === "rotation") f.protect();
+          const token = transition === "rotation" ? await f.token() : undefined;
+          const pending = outcome(
+            admitted(
+              update,
+              request(
+                "PATCH",
+                "notes/victim",
+                { newContent: "unauthorized overwrite" },
+                hold,
+                token,
+              ),
             ),
-          ),
-        );
-        await bounded(hold.reached);
-        f.protect(transition === "rotation");
-        hold.release();
-        const observed = await bounded(pending);
-        console.log(
-          JSON.stringify({
-            transition,
-            boundary: "body",
-            observed,
-            victim: f.notes.get("victim").content,
-            facts: f.facts.length,
-          }),
-        );
-        assertEquals(observed.status, 401);
-        f.untouched();
-        const fresh = outcome(
-          admitted(
-            update,
-            request(
-              "PATCH",
-              "notes/victim",
-              { newContent: "authorized fresh writer" },
-              undefined,
-              await f.token(),
+          );
+          await bounded(hold.reached);
+          if (transition === "rotation") await f.rotate();
+          else f.protect();
+          hold.release();
+          const observed = await bounded(pending);
+          console.log(
+            JSON.stringify({
+              transition,
+              boundary: "body",
+              observed,
+              victim: f.notes.get("victim").content,
+              facts: f.facts.length,
+            }),
+          );
+          assertEquals(observed.status, transition === "rotation" ? 401 : 409);
+          assertEquals(
+            (observed.body as { code?: string }).code,
+            transition === "rotation"
+              ? "credentials_refused"
+              : "operation_conflict",
+          );
+          f.untouched();
+          const fresh = outcome(
+            admitted(
+              update,
+              request(
+                "PATCH",
+                "notes/victim",
+                { newContent: "authorized fresh writer" },
+                undefined,
+                await f.token(),
+              ),
             ),
-          ),
-        );
-        assertEquals((await fresh).status, 200);
-        assertEquals(f.notes.get("victim").content, "authorized fresh writer");
-      } finally {
-        hold.release();
-        await f.close();
-      }
-    });
+          );
+          assertEquals((await fresh).status, 200);
+          assertEquals(
+            f.notes.get("victim").content,
+            "authorized fresh writer",
+          );
+        } finally {
+          hold.release();
+        }
+      }));
   }
 });
 
 Deno.test("review repairs: R01 multipart and file-byte awaits preserve original HTTP authority", async (t) => {
   for (const boundary of ["multipart", "file-bytes"] as const) {
-    await t.step(boundary, async () => {
-      const f = await fixture(), hold = barrier();
-      try {
-        const form = new FormData();
-        form.append("file", new File(["blocked attachment"], "blocked.png"));
-        form.append("directory", "forbidden-new-directory");
-        const raw = new Request("http://fixture/_/api/files", {
-          method: "POST",
-          body: form,
-        });
-        const req = {
-          _raw: raw,
-          body: {
-            form: async () => {
-              if (boundary === "multipart") {
-                hold.arrive();
-                await hold.waiting;
-              }
-              const parsed = await raw.formData();
-              if (boundary === "file-bytes") {
-                const file = parsed.get("file");
-                assert(file instanceof File);
-                const read = file.arrayBuffer.bind(file);
-                file.arrayBuffer = async () => {
+    await t.step(boundary, () =>
+      mutationFixture(async (f) => {
+        const hold = f.barrier();
+        try {
+          const form = new FormData();
+          form.append("file", new File(["blocked attachment"], "blocked.png"));
+          form.append("directory", "forbidden-new-directory");
+          const raw = new Request("http://fixture/_/api/files", {
+            method: "POST",
+            body: form,
+          });
+          const req = {
+            _raw: raw,
+            body: {
+              form: async () => {
+                if (boundary === "multipart") {
                   hold.arrive();
                   await hold.waiting;
-                  return await read();
-                };
-              }
-              return parsed;
+                }
+                const parsed = await raw.formData();
+                if (boundary === "file-bytes") {
+                  const file = parsed.get("file");
+                  assert(file instanceof File);
+                  const read = file.arrayBuffer.bind(file);
+                  file.arrayBuffer = async () => {
+                    hold.arrive();
+                    await hold.waiting;
+                    return await read();
+                  };
+                }
+                return parsed;
+              },
             },
-          },
-        } as unknown as PathfinderRequest;
-        const pending = outcome(admitted(upload, req));
-        await bounded(hold.reached);
-        f.protect();
-        hold.release();
-        const observed = await bounded(pending);
-        console.log(
-          JSON.stringify({ boundary, observed, facts: f.facts.length }),
-        );
-        assertEquals(observed.status, 401);
-        f.untouched();
-      } finally {
-        hold.release();
-        await f.close();
-      }
-    });
+          } as unknown as PathfinderRequest;
+          const pending = outcome(admitted(upload, req));
+          await bounded(hold.reached);
+          f.protect();
+          hold.release();
+          const observed = await bounded(pending);
+          console.log(
+            JSON.stringify({ boundary, observed, facts: f.facts.length }),
+          );
+          assertEquals(observed.status, 409);
+          f.untouched();
+        } finally {
+          hold.release();
+        }
+      }));
   }
 });
 
@@ -393,225 +423,90 @@ Deno.test("review repairs: R01 queued A and B retain admission authority for eve
     ],
   ];
   for (const [name, handler, method, route, data] of jobs) {
-    await t.step(name, async () => {
-      const f = await fixture(), hold = barrier(), queued = barrier();
-      let first: Promise<Awaited<ReturnType<typeof outcome>>> | undefined;
-      let second: Promise<Awaited<ReturnType<typeof outcome>>> | undefined;
-      try {
-        const guard = f.runtime.guard.bind(f.runtime);
-        let armed = true;
-        f.runtime.guard = async (...args) => {
-          if (armed) {
-            armed = false;
-            hold.arrive();
-            await hold.waiting;
-          }
-          return await guard(...args);
-        };
-        first = outcome(
-          admitted(
-            create,
-            request("POST", "notes", { path: "blocked-A", content: "old A" }),
-          ),
-        );
-        await bounded(hold.reached);
-        const form = new FormData();
-        form.append("file", new File(["blocked bytes"], "blocked.png"));
-        form.append("directory", "blocked");
-        const req = request(method, route, name === "upload" ? form : data);
-        const key = {
-          create: "createNote",
-          save: "updateNote",
-          delete: "deleteNote",
-          upload: "uploadFile",
-          rewrite: "rewriteRefs",
-        }[name] as "createNote";
-        // Observe real facade admission; the original method enqueues B before
-        // this wrapper signals. No private-lock mutation or timing sleep.
-        const original = f.operations[key].bind(f.operations);
-        f.operations[key] = (...args) => {
-          const result = original(...args);
-          queued.arrive();
-          return result;
-        };
-        second = outcome(admitted(handler, req));
-        await bounded(queued.reached);
-        f.protect();
-        hold.release();
-        const [a, b] = await bounded(Promise.all([first, second]));
-        console.log(
-          JSON.stringify({
-            name,
-            boundary: "operation-lock",
-            a,
-            b,
-            victimExists: f.operations.noteExists("victim"),
-            facts: f.facts.length,
-          }),
-        );
-        assertEquals(b.status, 401);
-        assertEquals(a.status, 401);
-        f.untouched();
-      } finally {
-        hold.release();
-        if (first) await first;
-        if (second) await second;
-        await f.close();
-      }
-    });
+    await t.step(name, () =>
+      mutationFixture(async (f) => {
+        const hold = f.barrier(), queued = f.barrier();
+        let first: Promise<Awaited<ReturnType<typeof outcome>>> | undefined;
+        let second: Promise<Awaited<ReturnType<typeof outcome>>> | undefined;
+        try {
+          const guard = f.runtime.guard.bind(f.runtime);
+          let armed = true;
+          f.runtime.guard = async (...args) => {
+            if (armed) {
+              armed = false;
+              hold.arrive();
+              await hold.waiting;
+            }
+            return await guard(...args);
+          };
+          first = outcome(
+            admitted(
+              create,
+              request("POST", "notes", { path: "blocked-A", content: "old A" }),
+            ),
+          );
+          await bounded(hold.reached);
+          const form = new FormData();
+          form.append("file", new File(["blocked bytes"], "blocked.png"));
+          form.append("directory", "blocked");
+          const req = request(method, route, name === "upload" ? form : data);
+          const key = {
+            create: "createNote",
+            save: "updateNote",
+            delete: "deleteNote",
+            upload: "uploadFile",
+            rewrite: "rewriteRefs",
+          }[name] as "createNote";
+          // Observe real facade admission; the original method enqueues B before
+          // this wrapper signals. No private-lock mutation or timing sleep.
+          const original = f.operations[key].bind(f.operations);
+          f.operations[key] = (...args) => {
+            const result = original(...args);
+            queued.arrive();
+            return result;
+          };
+          second = outcome(admitted(handler, req));
+          await bounded(queued.reached);
+          f.protect();
+          hold.release();
+          const [a, b] = await bounded(Promise.all([first, second]));
+          console.log(
+            JSON.stringify({
+              name,
+              boundary: "operation-lock",
+              a,
+              b,
+              victimExists: f.operations.noteExists("victim"),
+              facts: f.facts.length,
+            }),
+          );
+          assertEquals(b.status, 409);
+          assertEquals(a.status, 409);
+          f.untouched();
+        } finally {
+          hold.release();
+          if (first) await first;
+          if (second) await second;
+        }
+      }));
   }
 });
 
 Deno.test("review repairs: R01 preparation and commit waits reject stale public epochs", async (t) => {
   for (const boundary of ["preparation", "commit", "empty-rewrite"] as const) {
-    await t.step(boundary, async () => {
-      const f = await fixture(), hold = barrier();
-      let locked: Promise<void> | undefined;
-      let pending: Promise<Awaited<ReturnType<typeof outcome>>> | undefined;
-      try {
-        if (boundary === "commit") {
-          locked = f.lifecycle.gate.run(async () => {
-            hold.arrive();
-            await hold.waiting;
-          });
-          await bounded(hold.reached);
-        } else {
-          const prepare = f.notes.prepareRefsRewrite.bind(f.notes);
-          f.notes.prepareRefsRewrite = async (...args) => {
-            const changes = await prepare(...args);
-            hold.arrive();
-            await hold.waiting;
-            return changes;
-          };
-        }
-        const route = boundary === "empty-rewrite"
-          ? "files/rewrite-refs?old_path=absent.png&new_path=x.png"
-          : "files/rewrite-refs?old_path=old.png&new_path=blocked.png";
-        const entered = barrier();
-        const rewriteRefs = f.operations.rewriteRefs.bind(f.operations);
-        f.operations.rewriteRefs = (...args) => {
-          const result = rewriteRefs(...args);
-          entered.arrive();
-          return result;
-        };
-        pending = outcome(admitted(rewrite, request("POST", route, null)));
-        await bounded(boundary === "commit" ? entered.reached : hold.reached);
-        // Auth stays public/writable: the epoch, not a replacement credential,
-        // must reject this already admitted work, including no-op preparation.
-        f.lifecycle.bumpEpoch();
-        hold.release();
-        if (locked) await locked;
-        const observed = await bounded(pending);
-        console.log(
-          JSON.stringify({ boundary, observed, facts: f.facts.length }),
-        );
-        assertEquals(observed.status, 409);
-        assertEquals(
-          (observed.body as { code?: string }).code,
-          "operation_conflict",
-        );
-        f.untouched();
-      } finally {
-        hold.release();
-        if (locked) await locked;
-        if (pending) await pending;
-        await f.close();
-      }
-    });
-  }
-});
-
-Deno.test("review repairs: R01 real signed expiry fences effects and no-expiry/settings-lock controls remain writable", async () => {
-  const f = await fixture(), hold = barrier();
-  const clock = Date.now;
-  try {
-    f.protect();
-    const now = clock();
-    const token = await f.token(Math.floor(now / 1000) + 60);
-    const pending = outcome(
-      admitted(
-        update,
-        request(
-          "PATCH",
-          "notes/victim",
-          { newContent: "expired write" },
-          hold,
-          token,
-        ),
-      ),
-    );
-    await bounded(hold.reached);
-    Date.now = () => now + 120000;
-    hold.release();
-    const observed = await bounded(pending);
-    Date.now = clock;
-    console.log(
-      JSON.stringify({
-        boundary: "signed-expiry-after-admission",
-        observed,
-        facts: f.facts.length,
-      }),
-    );
-    assertEquals(observed.status, 401);
-    f.untouched();
-    const req = request(
-      "PATCH",
-      "notes/victim",
-      { newContent: "authorized no-expiry" },
-      undefined,
-      await f.token(),
-    );
-    assertEquals((await outcome(admitted(update, req))).status, 200);
-    assertEquals(f.notes.get("victim").content, "authorized no-expiry");
-    f.config.saveStoredConfig({
-      ...f.config.storedConfig,
-      auth_type: "none",
-      read_only_settings: true,
-    });
-    f.config.authType = AuthType.NONE;
-    state.auth = null;
-    f.lifecycle.bumpEpoch();
-    assert(!f.config.settingsWritable);
-    assertEquals(
-      (await outcome(
-        admitted(
-          update,
-          request("PATCH", "notes/victim", {
-            newContent: "public note through settings lock",
-          }),
-        ),
-      )).status,
-      200,
-    );
-    assertEquals(
-      f.notes.get("victim").content,
-      "public note through settings lock",
-    );
-  } finally {
-    Date.now = clock;
-    hold.release();
-    await f.close();
-  }
-});
-
-Deno.test("review repairs: R01 protection rotation and signed expiry are rechecked after preparation and commit waits", async (t) => {
-  for (const transition of ["protection", "rotation", "expiry"] as const) {
-    for (const boundary of ["preparation", "commit"] as const) {
-      await t.step(`${transition}/${boundary}`, async () => {
-        const f = await fixture(), hold = barrier(), queued = barrier();
-        const clock = Date.now, now = clock();
-        let gateOwner: Promise<void> | undefined;
+    await t.step(boundary, () =>
+      mutationFixture(async (f) => {
+        const hold = f.barrier();
+        let locked: Promise<void> | undefined;
         let pending: Promise<Awaited<ReturnType<typeof outcome>>> | undefined;
         try {
-          if (transition !== "protection") f.protect();
-          const token = transition === "protection" ? undefined : await f.token(
-            transition === "expiry" ? Math.floor(now / 1000) + 60 : undefined,
-          );
-          const retire = () => {
-            if (transition === "expiry") Date.now = () => now + 120000;
-            else f.protect(transition === "rotation");
-          };
-          if (boundary === "preparation") {
+          if (boundary === "commit") {
+            locked = f.lifecycle.gate.run(async () => {
+              hold.arrive();
+              await hold.waiting;
+            });
+            await bounded(hold.reached);
+          } else {
             const prepare = f.notes.prepareRefsRewrite.bind(f.notes);
             f.notes.prepareRefsRewrite = async (...args) => {
               const changes = await prepare(...args);
@@ -619,151 +514,282 @@ Deno.test("review repairs: R01 protection rotation and signed expiry are recheck
               await hold.waiting;
               return changes;
             };
-          } else {
-            // The policy writer already owns the actual gate; its commit
-            // precedes the old note request queued behind it.
-            const gate = f.lifecycle.gate.run.bind(f.lifecycle.gate);
-            gateOwner = gate(async () => {
-              hold.arrive();
-              await hold.waiting;
-              retire();
-            });
-            await bounded(hold.reached);
-            f.lifecycle.gate.run = (effect) => {
-              const result = gate(effect);
-              queued.arrive();
-              return result;
-            };
           }
-          pending = outcome(
-            admitted(
-              rewrite,
-              request(
-                "POST",
-                "files/rewrite-refs?old_path=old.png&new_path=blocked.png",
-                null,
-                undefined,
-                token,
-              ),
-            ),
-          );
-          await bounded(
-            boundary === "preparation" ? hold.reached : queued.reached,
-          );
-          if (boundary === "preparation") await f.lifecycle.gate.run(retire);
+          const route = boundary === "empty-rewrite"
+            ? "files/rewrite-refs?old_path=absent.png&new_path=x.png"
+            : "files/rewrite-refs?old_path=old.png&new_path=blocked.png";
+          const entered = f.barrier();
+          const rewriteRefs = f.operations.rewriteRefs.bind(f.operations);
+          f.operations.rewriteRefs = (...args) => {
+            const result = rewriteRefs(...args);
+            entered.arrive();
+            return result;
+          };
+          pending = outcome(admitted(rewrite, request("POST", route, null)));
+          await bounded(boundary === "commit" ? entered.reached : hold.reached);
+          // Auth stays public/writable: the epoch, not a replacement credential,
+          // must reject this already admitted work, including no-op preparation.
+          f.lifecycle.bumpEpoch();
           hold.release();
-          if (gateOwner) await gateOwner;
+          if (locked) await locked;
           const observed = await bounded(pending);
-          Date.now = clock;
           console.log(
-            JSON.stringify({
-              transition,
-              boundary,
-              observed,
-              facts: f.facts.length,
-            }),
+            JSON.stringify({ boundary, observed, facts: f.facts.length }),
           );
-          assertEquals(observed.status, 401);
+          assertEquals(observed.status, 409);
+          assertEquals(
+            (observed.body as { code?: string }).code,
+            "operation_conflict",
+          );
           f.untouched();
         } finally {
           hold.release();
-          if (gateOwner) await gateOwner;
+          if (locked) await locked;
           if (pending) await pending;
-          Date.now = clock;
-          await f.close();
         }
-      });
+      }));
+  }
+});
+
+Deno.test("review repairs: R01 real signed expiry fences effects while a fresh account and guest Edit remain writable", () =>
+  mutationFixture(async (f) => {
+    const hold = f.barrier();
+    try {
+      const token = await f.token();
+      const pending = outcome(
+        admitted(
+          update,
+          request(
+            "PATCH",
+            "notes/victim",
+            { newContent: "expired write" },
+            hold,
+            token,
+          ),
+        ),
+      );
+      await bounded(hold.reached);
+      f.expire();
+      hold.release();
+      const observed = await bounded(pending);
+      console.log(
+        JSON.stringify({
+          boundary: "signed-expiry-after-admission",
+          observed,
+          facts: f.facts.length,
+        }),
+      );
+      assertEquals(observed.status, 401);
+      assertEquals(
+        (observed.body as { code?: string }).code,
+        "credentials_refused",
+      );
+      f.untouched();
+      const req = request(
+        "PATCH",
+        "notes/victim",
+        { newContent: "authorized fresh session" },
+        undefined,
+        await f.token(),
+      );
+      assertEquals((await outcome(admitted(update, req))).status, 200);
+      assertEquals(f.notes.get("victim").content, "authorized fresh session");
+      const guest = await f.identity.composition.auth.capabilities(
+        new Request("http://fixture/"),
+      );
+      assertEquals([guest.canManageVault, guest.canEdit], [false, true]);
+      assertEquals(
+        (await outcome(
+          admitted(
+            update,
+            request("PATCH", "notes/victim", {
+              newContent: "public note through settings lock",
+            }),
+          ),
+        )).status,
+        200,
+      );
+      assertEquals(
+        f.notes.get("victim").content,
+        "public note through settings lock",
+      );
+    } finally {
+      hold.release();
+    }
+  }));
+
+Deno.test("review repairs: R01 protection rotation and signed expiry are rechecked after preparation and commit waits", async (t) => {
+  for (const transition of ["protection", "rotation", "expiry"] as const) {
+    for (const boundary of ["preparation", "commit"] as const) {
+      await t.step(
+        `${transition}/${boundary}`,
+        () =>
+          mutationFixture(async (f) => {
+            const hold = f.barrier(), queued = f.barrier();
+            let gateOwner: Promise<void> | undefined;
+            let pending:
+              | Promise<Awaited<ReturnType<typeof outcome>>>
+              | undefined;
+            try {
+              if (transition !== "protection") f.protect();
+              const token = transition === "protection"
+                ? undefined
+                : await f.token();
+              const retire = async () => {
+                if (transition === "expiry") f.expire();
+                else if (transition === "rotation") await f.rotate();
+                else f.protect();
+              };
+              if (boundary === "preparation") {
+                const prepare = f.notes.prepareRefsRewrite.bind(f.notes);
+                f.notes.prepareRefsRewrite = async (...args) => {
+                  const changes = await prepare(...args);
+                  hold.arrive();
+                  await hold.waiting;
+                  return changes;
+                };
+              } else {
+                // The policy writer already owns the actual gate; its commit
+                // precedes the old note request queued behind it.
+                const gate = f.lifecycle.gate.run.bind(f.lifecycle.gate);
+                gateOwner = gate(async () => {
+                  hold.arrive();
+                  await hold.waiting;
+                  await retire();
+                });
+                await bounded(hold.reached);
+                f.lifecycle.gate.run = (effect) => {
+                  const result = gate(effect);
+                  queued.arrive();
+                  return result;
+                };
+              }
+              pending = outcome(
+                admitted(
+                  rewrite,
+                  request(
+                    "POST",
+                    "files/rewrite-refs?old_path=old.png&new_path=blocked.png",
+                    null,
+                    undefined,
+                    token,
+                  ),
+                ),
+              );
+              await bounded(
+                boundary === "preparation" ? hold.reached : queued.reached,
+              );
+              if (boundary === "preparation") {
+                await f.lifecycle.gate.run(retire);
+              }
+              hold.release();
+              if (gateOwner) await gateOwner;
+              const observed = await bounded(pending);
+              console.log(
+                JSON.stringify({
+                  transition,
+                  boundary,
+                  observed,
+                  facts: f.facts.length,
+                }),
+              );
+              assertEquals(
+                observed.status,
+                transition === "protection" ? 409 : 401,
+              );
+              f.untouched();
+            } finally {
+              hold.release();
+              if (gateOwner) await gateOwner;
+              if (pending) await pending;
+            }
+          }),
+      );
     }
   }
 });
 
 Deno.test("review repairs: R01 queued requests reject rotation and signed expiry without borrowing a new epoch", async (t) => {
   for (const transition of ["rotation", "expiry"] as const) {
-    await t.step(transition, async () => {
-      const f = await fixture(), hold = barrier(), queued = barrier();
-      const clock = Date.now, now = clock();
-      let first: Promise<Awaited<ReturnType<typeof outcome>>> | undefined;
-      let second: Promise<Awaited<ReturnType<typeof outcome>>> | undefined;
-      try {
-        f.protect();
-        const token = await f.token(
-          transition === "expiry" ? Math.floor(now / 1000) + 60 : undefined,
-        );
-        const guard = f.runtime.guard.bind(f.runtime);
-        let armed = true;
-        f.runtime.guard = async (...args) => {
-          if (armed) {
-            armed = false;
-            hold.arrive();
-            await hold.waiting;
-          }
-          return await guard(...args);
-        };
-        first = outcome(
-          admitted(
-            create,
-            request(
-              "POST",
-              "notes",
-              { path: "blocked-A", content: "old A" },
-              undefined,
-              token,
+    await t.step(transition, () =>
+      mutationFixture(async (f) => {
+        const hold = f.barrier(), queued = f.barrier();
+        let first: Promise<Awaited<ReturnType<typeof outcome>>> | undefined;
+        let second: Promise<Awaited<ReturnType<typeof outcome>>> | undefined;
+        try {
+          f.protect();
+          const token = await f.token();
+          const guard = f.runtime.guard.bind(f.runtime);
+          let armed = true;
+          f.runtime.guard = async (...args) => {
+            if (armed) {
+              armed = false;
+              hold.arrive();
+              await hold.waiting;
+            }
+            return await guard(...args);
+          };
+          first = outcome(
+            admitted(
+              create,
+              request(
+                "POST",
+                "notes",
+                { path: "blocked-A", content: "old A" },
+                undefined,
+                token,
+              ),
             ),
-          ),
-        );
-        await bounded(hold.reached);
-        const updateNote = f.operations.updateNote.bind(f.operations);
-        f.operations.updateNote = (...args) => {
-          const result = updateNote(...args);
-          queued.arrive();
-          return result;
-        };
-        second = outcome(
-          admitted(
-            update,
-            request(
-              "PATCH",
-              "notes/victim",
-              { newContent: "old B" },
-              undefined,
-              token,
+          );
+          await bounded(hold.reached);
+          const updateNote = f.operations.updateNote.bind(f.operations);
+          f.operations.updateNote = (...args) => {
+            const result = updateNote(...args);
+            queued.arrive();
+            return result;
+          };
+          second = outcome(
+            admitted(
+              update,
+              request(
+                "PATCH",
+                "notes/victim",
+                { newContent: "old B" },
+                undefined,
+                token,
+              ),
             ),
-          ),
-        );
-        await bounded(queued.reached);
-        await f.lifecycle.gate.run(() => {
-          if (transition === "rotation") f.protect(true);
-          else Date.now = () => now + 120000;
-        });
-        hold.release();
-        const [a, b] = await bounded(Promise.all([first, second]));
-        Date.now = clock;
-        console.log(
-          JSON.stringify({
-            transition,
-            boundary: "operation-lock",
-            a,
-            b,
-            facts: f.facts.length,
-          }),
-        );
-        assertEquals(a.status, 401);
-        assertEquals(b.status, 401);
-        f.untouched();
-      } finally {
-        hold.release();
-        if (first) await first;
-        if (second) await second;
-        Date.now = clock;
-        await f.close();
-      }
-    });
+          );
+          await bounded(queued.reached);
+          await f.lifecycle.gate.run(async () => {
+            if (transition === "rotation") await f.rotate();
+            else f.expire();
+          });
+          hold.release();
+          const [a, b] = await bounded(Promise.all([first, second]));
+          console.log(
+            JSON.stringify({
+              transition,
+              boundary: "operation-lock",
+              a,
+              b,
+              facts: f.facts.length,
+            }),
+          );
+          assertEquals(a.status, 401);
+          assertEquals(b.status, 401);
+          f.untouched();
+        } finally {
+          hold.release();
+          if (first) await first;
+          if (second) await second;
+        }
+      }));
   }
 });
 
-Deno.test("review repairs: R01 missing API leases fail closed before preparation", async () => {
-  const f = await fixture();
-  try {
+Deno.test("review repairs: R01 missing API leases fail closed before preparation", () =>
+  mutationFixture(async (f) => {
     const observed = await outcome(
       f.operations.createNote(
         { path: "blocked", content: "missing authority" },
@@ -771,118 +797,127 @@ Deno.test("review repairs: R01 missing API leases fail closed before preparation
       ),
     );
     assertEquals(observed.status, 401);
+    assertEquals(observed.body, {
+      detail: "API mutation request authority is required.",
+      code: "mutation_authority_required",
+    });
     f.untouched();
-  } finally {
-    await f.close();
-  }
-});
+  }));
 
 Deno.test("HTTP lease controls: verified admission completion binds auth config and lifecycle identities", async (t) => {
   for (const replacement of ["auth", "config", "lifecycle"] as const) {
-    await t.step(replacement, async () => {
-      const f = await fixture(), hold = barrier();
-      let pending: Promise<Awaited<ReturnType<typeof outcome>>> | undefined;
-      try {
-        f.protect();
-        const base = request(
-          "PATCH",
-          "notes/victim",
-          null,
-          undefined,
-          await f.token(),
-        );
-        let bodies = 0;
-        const req = {
-          ...base,
-          body: {
-            json: () => {
-              bodies++;
-              return Promise.resolve({ newContent: "must not enter body" });
+    await t.step(replacement, () =>
+      mutationFixture(async (f) => {
+        const hold = f.barrier();
+        let pending: Promise<Awaited<ReturnType<typeof outcome>>> | undefined;
+        try {
+          f.protect();
+          const base = request(
+            "PATCH",
+            "notes/victim",
+            null,
+            undefined,
+            await f.token(),
+          );
+          let bodies = 0;
+          const req = {
+            ...base,
+            body: {
+              text: () => {
+                bodies++;
+                return Promise.resolve(
+                  JSON.stringify({ newContent: "must not enter body" }),
+                );
+              },
             },
-          },
-        } as unknown as PathfinderRequest;
-        await enforceAuth(req._raw);
-        const auth = state.auth!;
-        const verify = auth.validateTokenMetadata.bind(auth);
-        auth.validateTokenMetadata = async (...args) => {
-          const metadata = await verify(...args);
-          hold.arrive();
-          await hold.waiting;
-          return metadata;
-        };
-        pending = outcome(update(req));
-        await bounded(hold.reached);
-        if (replacement === "auth") state.auth = new LocalAuth(f.config);
-        else if (replacement === "config") {
-          state.config = new GlobalConfig(f.config.resolved);
-        } else state.lifecycle = new PluginLifecycle(f.config);
-        hold.release();
-        const observed = await bounded(pending);
-        assertEquals(observed.status, replacement === "auth" ? 401 : 409);
-        assertEquals(bodies, 0);
-        f.untouched();
-      } finally {
-        hold.release();
-        if (pending) await pending;
-        await f.close();
-      }
-    });
+          } as unknown as PathfinderRequest;
+          const sessions = f.identity.sessions;
+          const verify = sessions.validateToken.bind(sessions);
+          sessions.validateToken = async (...args) => {
+            const metadata = await verify(...args);
+            hold.arrive();
+            await hold.waiting;
+            return metadata;
+          };
+          pending = outcome(update(req));
+          await bounded(hold.reached);
+          if (replacement === "auth") state.identity = null;
+          else if (replacement === "config") {
+            state.config = new GlobalConfig(f.config.resolved);
+          } else {state.lifecycle = new PluginLifecycle(
+              f.config,
+              f.identity.composition.eligibility,
+            );}
+          hold.release();
+          const observed = await bounded(pending);
+          assertEquals(observed.status, 409);
+          assertEquals(bodies, 0);
+          f.untouched();
+        } finally {
+          hold.release();
+          if (pending) await pending;
+        }
+      }));
   }
 });
 
-Deno.test("HTTP lease controls: setup and note read-only statuses survive late handler catch mappings; cookies remain supported", async (t) => {
-  for (const mode of ["setup", "read-only", "cookie"] as const) {
-    await t.step(mode, async () => {
-      const f = await fixture(), hold = barrier();
-      let pending: Promise<Awaited<ReturnType<typeof outcome>>> | undefined;
-      try {
-        if (mode === "cookie") {
-          f.protect();
-          const req = request("PATCH", "notes/victim", {
-            newContent: "cookie-authorized writer",
-          });
-          req._raw.headers.set("cookie", `token=${await f.token()}`);
-          assertEquals((await outcome(admitted(update, req))).status, 200);
-          assertEquals(
-            f.notes.get("victim").content,
-            "cookie-authorized writer",
-          );
-          return;
-        }
-        const prepare = f.notes.prepareRefsRewrite.bind(f.notes);
-        f.notes.prepareRefsRewrite = async (...args) => {
-          const changes = await prepare(...args);
-          hold.arrive();
-          await hold.waiting;
-          return changes;
-        };
-        pending = outcome(
-          admitted(
-            rewrite,
-            request(
-              "POST",
-              "files/rewrite-refs?old_path=old.png&new_path=blocked.png",
-              null,
+Deno.test("HTTP lease controls: removed owners and guest View cannot write; cookies remain supported", async (t) => {
+  for (const mode of ["owner-retired", "read-only", "cookie"] as const) {
+    await t.step(mode, () =>
+      mutationFixture(async (f) => {
+        const hold = f.barrier();
+        let pending: Promise<Awaited<ReturnType<typeof outcome>>> | undefined;
+        try {
+          if (mode === "cookie") {
+            f.protect();
+            const req = request("PATCH", "notes/victim", {
+              newContent: "cookie-authorized writer",
+            });
+            req._raw.headers.set(
+              "cookie",
+              `${identityTokenScope(f.config.pathPrefix).cookieName}=${await f
+                .token()}`,
+            );
+            assertEquals((await outcome(admitted(update, req))).status, 200);
+            assertEquals(
+              f.notes.get("victim").content,
+              "cookie-authorized writer",
+            );
+            return;
+          }
+          const prepare = f.notes.prepareRefsRewrite.bind(f.notes);
+          f.notes.prepareRefsRewrite = async (...args) => {
+            const changes = await prepare(...args);
+            hold.arrive();
+            await hold.waiting;
+            return changes;
+          };
+          pending = outcome(
+            admitted(
+              rewrite,
+              request(
+                "POST",
+                "files/rewrite-refs?old_path=old.png&new_path=blocked.png",
+                null,
+              ),
             ),
-          ),
-        );
-        await bounded(hold.reached);
-        await f.lifecycle.gate.run(() => {
-          if (mode === "setup") f.config.setupRequired = true;
-          else f.config.authType = AuthType.READ_ONLY;
-          f.lifecycle.bumpEpoch();
-        });
-        hold.release();
-        assertEquals(
-          (await bounded(pending)).status,
-          mode === "setup" ? 503 : 403,
-        );
-        f.untouched();
-      } finally {
-        hold.release();
-        if (pending) await pending;
-        await f.close();
-      }
-    });
+          );
+          await bounded(hold.reached);
+          await f.lifecycle.gate.run(() => {
+            if (mode === "owner-retired") state.identity = null;
+            else f.protect("view");
+          });
+          hold.release();
+          assertEquals((await bounded(pending)).status, 409);
+          const fresh = await outcome(
+            admitted(rewrite, request("POST", "files/rewrite-refs", null)),
+          );
+          assertEquals(fresh.status, mode === "owner-retired" ? 503 : 403);
+          f.untouched();
+        } finally {
+          hold.release();
+          if (pending) await pending;
+        }
+      }));
   }
 });
