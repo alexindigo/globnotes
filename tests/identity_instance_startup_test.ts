@@ -559,12 +559,13 @@ Deno.test("instance startup: replay uses the vault ID from the witnessed binding
       `${config.statePath}/access.json`,
     ];
     const before = paths.map(present);
+    const physicalBinding = Deno.realPathSync(binding);
     const read = Deno.readTextFileSync;
     let reads = 0;
     try {
       Deno.readTextFileSync = (path) => {
         // Let a second reader and its local verification see the same rewrite.
-        if (path !== binding) return read(path);
+        if (path !== physicalBinding) return read(path);
         if (++reads === 2) Deno.writeTextFileSync(binding, encode(VAULT_A));
         try {
           return read(path);
@@ -646,7 +647,9 @@ Deno.test("instance startup: a live close failure hands an unjournaled discard t
   identityFixture(async (root, scope) => {
     const config = configuration(root, true, true);
     const instanceRoot = config.resolved.instancePath;
-    const journal = `${instanceRoot}/identity-transaction.json`;
+    const instanceDirectory = Deno.realPathSync(instanceRoot);
+    const journal = `${instanceDirectory}/identity-transaction.json`;
+    const accessDirectory = Deno.realPathSync(config.statePath);
     const access = `${config.statePath}/access.json`;
     const accounts = `${instanceRoot}/accounts.json`;
     const link = Deno.linkSync, remove = Deno.removeSync;
@@ -687,8 +690,8 @@ Deno.test("instance startup: a live close failure hands an unjournaled discard t
           try {
             Deno.linkSync = (from, to) => {
               if (to === journal) {
-                const [staged] = [...Deno.readDirSync(config.statePath)];
-                candidate = `${config.statePath}/${staged.name}`;
+                const [staged] = [...Deno.readDirSync(accessDirectory)];
+                candidate = `${accessDirectory}/${staged.name}`;
                 throw new Error("prepared journal publication refused");
               }
               link(from, to);
@@ -792,11 +795,12 @@ Deno.test("instance startup: recovery of an abandoned staged group releases cand
       "Identity publication requires recovery; no partial state is available.",
     );
     const [accountCandidate, accessCandidate] = candidates();
+    const physicalAccessCandidate = Deno.realPathSync(accessCandidate);
     const remove = Deno.removeSync;
     const refusal = new Error("staged access candidate could not be removed");
     try {
       Deno.removeSync = (path, options) => {
-        if (path === accessCandidate) throw refusal;
+        if (path === physicalAccessCandidate) throw refusal;
         return remove(path, options);
       };
       const failure = await assertRejects(
